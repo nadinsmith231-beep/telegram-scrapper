@@ -1,11 +1,8 @@
 {
-  "name": "telegram-group-manager",
+  "name": "telegram-scrapper",
   "version": "1.0.0",
   "type": "module",
-  "scripts": {
-    "start": "node server.js"
-  },
   "dependencies": {
-    "telegram": "^2.26.22"
+    "telegram": "^2.25.8"
   }
 }
