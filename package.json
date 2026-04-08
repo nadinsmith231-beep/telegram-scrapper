@@ -1,0 +1,12 @@
+{
+  "name": "telegram-group-manager",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.22.1",
+    "telegram": "^2.26.22"
+  }
+}
