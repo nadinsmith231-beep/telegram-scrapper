@@ -1,7 +1,6 @@
 import { Api } from 'telegram';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions';
-import input from 'input'; // Optional: for interactive prompts, but we handle via API
 
 // Helper to create client
 async function getClient(apiId, apiHash, sessionString) {
