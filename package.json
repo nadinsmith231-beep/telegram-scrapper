@@ -2,6 +2,9 @@
   "name": "telegram-scrapper",
   "version": "1.0.0",
   "type": "module",
+  "scripts": {
+    "build": "echo 'Static site with serverless functions'"
+  },
   "dependencies": {
     "telegram": "^2.25.8"
   }
