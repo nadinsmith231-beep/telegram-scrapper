@@ -1,13 +1,14 @@
 {
-  "buildCommand": "",
-  "outputDirectory": ".",
-  "functions": {
-    "api/telegram.js": {
-      "maxDuration": 30
-    }
+  "name": "telegram-scrapper",
+  "version": "1.0.0",
+  "type": "module",
+  "engines": {
+    "node": "18.x"
   },
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/telegram" },
-    { "source": "/(.*)", "destination": "/index.html" }
-  ]
+  "scripts": {
+    "build": "echo 'Static site with serverless functions'"
+  },
+  "dependencies": {
+    "telegram": "^2.25.8"
+  }
 }
