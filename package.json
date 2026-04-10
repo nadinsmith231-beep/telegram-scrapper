@@ -6,7 +6,7 @@
     "node": "18.x"
   },
   "scripts": {
-    "build": "echo 'Static site with serverless functions'"
+    "build": "exit 0"
   },
   "dependencies": {
     "telegram": "^2.25.8"
