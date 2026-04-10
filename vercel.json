@@ -1,5 +1,5 @@
 {
-  "buildCommand": "",
+  "buildCommand": "echo 'Static site with serverless functions'",
   "outputDirectory": ".",
   "functions": {
     "api/telegram.js": {
