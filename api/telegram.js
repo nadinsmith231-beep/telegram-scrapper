@@ -1,6 +1,5 @@
 import MTProto from '@mtproto/core';
 
-// In‑memory session storage (Vercel is stateless, so we rely on the sessionString passed from frontend)
 function getSession(sessionString) {
   try {
     return sessionString ? JSON.parse(sessionString) : {};
@@ -10,14 +9,20 @@ function getSession(sessionString) {
 }
 
 export default async function handler(req, res) {
-  // CORS headers
+  // Always set CORS and JSON headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Content-Type', 'application/json');
 
+  // Handle preflight
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  // Log incoming request (for debugging)
+  console.log('Received POST request, body:', req.body);
 
   const {
     action,
@@ -34,40 +39,52 @@ export default async function handler(req, res) {
     limit = 500,
   } = req.body;
 
+  // Validate required fields
   if (!apiId || !apiHash) {
+    console.error('Missing API ID or Hash');
     return res.status(400).json({ error: 'API ID and API Hash are required' });
   }
 
-  // Restore session data from frontend
   let sessionData = getSession(sessionString);
 
-  // Create MTProto instance with in‑memory storage
-  const mtproto = new MTProto({
-    api_id: Number(apiId),
-    api_hash: apiHash,
-    storage: {
-      set: (key, value) => { sessionData[key] = value; },
-      get: (key) => sessionData[key],
-    },
-  });
+  // Create MTProto instance with safe storage
+  let mtproto;
+  try {
+    mtproto = new MTProto({
+      api_id: Number(apiId),
+      api_hash: apiHash,
+      storage: {
+        set: (key, value) => { sessionData[key] = value; },
+        get: (key) => sessionData[key],
+      },
+    });
+    console.log('MTProto instance created');
+  } catch (err) {
+    console.error('Failed to create MTProto:', err);
+    return res.status(500).json({ error: 'MTProto initialization failed', details: err.message });
+  }
 
   try {
     switch (action) {
       case 'sendCode': {
         if (!phone) return res.status(400).json({ error: 'Phone number required' });
-        const { phone_code_hash } = await mtproto.call('auth.sendCode', {
+        console.log(`Sending code to ${phone}...`);
+        const result = await mtproto.call('auth.sendCode', {
           phone_number: phone,
           settings: { _: 'codeSettings' },
         });
-        sessionData.phone_code_hash = phone_code_hash;
+        sessionData.phone_code_hash = result.phone_code_hash;
         const newSessionString = JSON.stringify(sessionData);
+        console.log('Code sent successfully');
         return res.json({ success: true, sessionString: newSessionString });
       }
 
       case 'signIn': {
         if (!phone || !code) return res.status(400).json({ error: 'Phone and code required' });
         const phone_code_hash = sessionData.phone_code_hash;
-        if (!phone_code_hash) return res.status(400).json({ error: 'No active code, request a new one first' });
+        if (!phone_code_hash) {
+          return res.status(400).json({ error: 'No active code, please request a new one' });
+        }
         try {
           await mtproto.call('auth.signIn', {
             phone_number: phone,
@@ -85,10 +102,7 @@ export default async function handler(req, res) {
       }
 
       case 'getDialogs': {
-        const dialogsResult = await mtproto.call('messages.getDialogs', {
-          offset_id: 0,
-          limit: 100,
-        });
+        const dialogsResult = await mtproto.call('messages.getDialogs', { offset_id: 0, limit: 100 });
         const groups = [];
         for (const dialog of dialogsResult.dialogs) {
           let peerId = null, peerType = null;
@@ -160,10 +174,7 @@ export default async function handler(req, res) {
           access_hash: userAccessHash ? String(userAccessHash) : '0',
         };
         try {
-          await mtproto.call('channels.inviteToChannel', {
-            channel,
-            users: [user],
-          });
+          await mtproto.call('channels.inviteToChannel', { channel, users: [user] });
           return res.json({ success: true });
         } catch (err) {
           let errorMsg = err.error_message || err.message;
@@ -200,7 +211,8 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: `Unknown action: ${action}` });
     }
   } catch (err) {
-    console.error('MTProto error:', err);
+    console.error('MTProto call error:', err);
+    // Return a clean JSON error, never HTML
     const errorMessage = err.error_message || err.message || 'Internal server error';
     return res.status(500).json({ error: errorMessage });
   }
