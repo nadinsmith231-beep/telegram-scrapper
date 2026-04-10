@@ -1,28 +1,43 @@
 import MTProto from '@mtproto/core';
 
-function getSession(sessionString) {
-  try {
-    return sessionString ? JSON.parse(sessionString) : {};
-  } catch {
-    return {};
+// Simple synchronous storage (works in serverless)
+class MemoryStorage {
+  constructor(initialData = {}) {
+    this.data = { ...initialData };
+  }
+  set(key, value) {
+    this.data[key] = value;
+  }
+  get(key) {
+    return this.data[key];
+  }
+  getAll() {
+    return this.data;
+  }
+  save() {
+    return JSON.stringify(this.data);
+  }
+  static load(jsonString) {
+    try {
+      const data = JSON.parse(jsonString || '{}');
+      return new MemoryStorage(data);
+    } catch {
+      return new MemoryStorage({});
+    }
   }
 }
 
 export default async function handler(req, res) {
-  // Always set CORS and JSON headers
+  // CORS and JSON headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Content-Type', 'application/json');
 
-  // Handle preflight
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
-
-  // Log incoming request (for debugging)
-  console.log('Received POST request, body:', req.body);
 
   const {
     action,
@@ -39,29 +54,36 @@ export default async function handler(req, res) {
     limit = 500,
   } = req.body;
 
-  // Validate required fields
   if (!apiId || !apiHash) {
-    console.error('Missing API ID or Hash');
     return res.status(400).json({ error: 'API ID and API Hash are required' });
   }
 
-  let sessionData = getSession(sessionString);
+  // Convert apiId to number, validate
+  const apiIdNum = Number(apiId);
+  if (isNaN(apiIdNum)) {
+    return res.status(400).json({ error: 'API ID must be a number' });
+  }
 
-  // Create MTProto instance with safe storage
+  // Restore session from frontend
+  const storage = MemoryStorage.load(sessionString);
   let mtproto;
+
   try {
+    // Create MTProto instance with a clean storage adapter
     mtproto = new MTProto({
-      api_id: Number(apiId),
+      api_id: apiIdNum,
       api_hash: apiHash,
       storage: {
-        set: (key, value) => { sessionData[key] = value; },
-        get: (key) => sessionData[key],
+        set: (key, value) => storage.set(key, value),
+        get: (key) => storage.get(key),
       },
     });
-    console.log('MTProto instance created');
   } catch (err) {
-    console.error('Failed to create MTProto:', err);
-    return res.status(500).json({ error: 'MTProto initialization failed', details: err.message });
+    console.error('MTProto instantiation error:', err);
+    return res.status(500).json({
+      error: 'MTProto initialization failed',
+      details: err.message,
+    });
   }
 
   try {
@@ -73,17 +95,17 @@ export default async function handler(req, res) {
           phone_number: phone,
           settings: { _: 'codeSettings' },
         });
-        sessionData.phone_code_hash = result.phone_code_hash;
-        const newSessionString = JSON.stringify(sessionData);
+        storage.set('phone_code_hash', result.phone_code_hash);
+        const newSessionString = storage.save();
         console.log('Code sent successfully');
         return res.json({ success: true, sessionString: newSessionString });
       }
 
       case 'signIn': {
         if (!phone || !code) return res.status(400).json({ error: 'Phone and code required' });
-        const phone_code_hash = sessionData.phone_code_hash;
+        const phone_code_hash = storage.get('phone_code_hash');
         if (!phone_code_hash) {
-          return res.status(400).json({ error: 'No active code, please request a new one' });
+          return res.status(400).json({ error: 'No active code. Please request a new one.' });
         }
         try {
           await mtproto.call('auth.signIn', {
@@ -91,7 +113,7 @@ export default async function handler(req, res) {
             phone_code: code,
             phone_code_hash,
           });
-          const newSessionString = JSON.stringify(sessionData);
+          const newSessionString = storage.save();
           return res.json({ success: true, sessionString: newSessionString });
         } catch (err) {
           if (err.error_message === 'SESSION_PASSWORD_NEEDED') {
@@ -102,7 +124,10 @@ export default async function handler(req, res) {
       }
 
       case 'getDialogs': {
-        const dialogsResult = await mtproto.call('messages.getDialogs', { offset_id: 0, limit: 100 });
+        const dialogsResult = await mtproto.call('messages.getDialogs', {
+          offset_id: 0,
+          limit: 100,
+        });
         const groups = [];
         for (const dialog of dialogsResult.dialogs) {
           let peerId = null, peerType = null;
@@ -212,7 +237,6 @@ export default async function handler(req, res) {
     }
   } catch (err) {
     console.error('MTProto call error:', err);
-    // Return a clean JSON error, never HTML
     const errorMessage = err.error_message || err.message || 'Internal server error';
     return res.status(500).json({ error: errorMessage });
   }
