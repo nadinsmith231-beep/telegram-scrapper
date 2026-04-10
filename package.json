@@ -2,13 +2,10 @@
   "name": "telegram-scrapper",
   "version": "1.0.0",
   "type": "module",
-  "engines": {
-    "node": "18.x"
-  },
   "scripts": {
-    "build": "exit 0"
+    "build": "echo 'Static site with serverless functions'"
   },
   "dependencies": {
-    "telegram": "2.25.8"
+    "telegram": "^2.25.8"
   }
 }
