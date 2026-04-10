@@ -1,20 +1,18 @@
 import { Api } from 'telegram';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions';
-import WebSocket from 'ws';
-
-// Polyfill WebSocket for Node.js environment (Vercel)
-global.WebSocket = WebSocket;
 
 export default async function handler(req, res) {
-  // CORS headers
+  // CORS and JSON headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Content-Type', 'application/json');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
   const {
     action,
@@ -40,12 +38,17 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'API ID must be a number' });
   }
 
-  // Helper to create and connect client
+  // Helper: create client with HTTP transport (no WebSocket)
   const getClient = async (session = '') => {
     const stringSession = new StringSession(session);
     const client = new TelegramClient(stringSession, apiIdNum, apiHash, {
       connectionRetries: 2,
-      useWSS: true,
+      // Use HTTP transport instead of WebSocket
+      transport: (apiIdNum, apiHash, dcId) => {
+        // Use the default TCP transport (MTProto over TCP) – works on Vercel
+        const { TCPTransport } = require('telegram/network/MTProtoPlainSender');
+        return new TCPTransport();
+      },
       timeout: 30000,
     });
     await client.connect();
@@ -60,7 +63,7 @@ export default async function handler(req, res) {
         try {
           await client.sendCode({ apiId: apiIdNum, apiHash }, phone);
           await client.disconnect();
-          return res.json({ success: true, message: 'Verification code sent' });
+          return res.json({ success: true });
         } catch (err) {
           await client.disconnect();
           return res.status(400).json({ error: err.message });
@@ -83,7 +86,7 @@ export default async function handler(req, res) {
         } catch (err) {
           await client.disconnect();
           if (err.message.includes('SESSION_PASSWORD_NEEDED')) {
-            return res.status(400).json({ error: '2FA_REQUIRED', message: 'Two‑factor password required' });
+            return res.status(400).json({ error: '2FA_REQUIRED', message: '2FA password required' });
           }
           return res.status(400).json({ error: err.message });
         }
@@ -112,20 +115,15 @@ export default async function handler(req, res) {
 
       case 'scrapeMembers': {
         if (!sessionString || !groupId || !groupAccessHash) {
-          return res.status(400).json({ error: 'Session, group ID, and access hash are required' });
+          return res.status(400).json({ error: 'Missing parameters' });
         }
         const client = await getClient(sessionString);
         try {
-          const channel = {
-            className: 'InputPeerChannel',
-            channelId: Number(groupId),
-            accessHash: String(groupAccessHash),
-          };
+          const channel = { className: 'InputPeerChannel', channelId: Number(groupId), accessHash: String(groupAccessHash) };
           const members = [];
           let offset = 0;
           const batchSize = 200;
           let hasMore = true;
-
           while (hasMore && members.length < limit) {
             const participants = await client.invoke(
               new Api.channels.GetParticipants({
@@ -160,20 +158,12 @@ export default async function handler(req, res) {
 
       case 'addMember': {
         if (!sessionString || !groupId || !groupAccessHash || !userId || !userAccessHash) {
-          return res.status(400).json({ error: 'Missing session, group, or user details' });
+          return res.status(400).json({ error: 'Missing parameters' });
         }
         const client = await getClient(sessionString);
         try {
-          const channel = {
-            className: 'InputPeerChannel',
-            channelId: Number(groupId),
-            accessHash: String(groupAccessHash),
-          };
-          const user = {
-            className: 'InputPeerUser',
-            userId: Number(userId),
-            accessHash: String(userAccessHash),
-          };
+          const channel = { className: 'InputPeerChannel', channelId: Number(groupId), accessHash: String(groupAccessHash) };
+          const user = { className: 'InputPeerUser', userId: Number(userId), accessHash: String(userAccessHash) };
           await client.invoke(new Api.channels.InviteToChannel({ channel, users: [user] }));
           await client.disconnect();
           return res.json({ success: true });
@@ -196,20 +186,15 @@ export default async function handler(req, res) {
 
       case 'getGroupInfo': {
         if (!sessionString || !groupId || !groupAccessHash) {
-          return res.status(400).json({ error: 'Session, group ID, and access hash are required' });
+          return res.status(400).json({ error: 'Missing parameters' });
         }
         const client = await getClient(sessionString);
         try {
-          const channel = {
-            className: 'InputPeerChannel',
-            channelId: Number(groupId),
-            accessHash: String(groupAccessHash),
-          };
+          const channel = { className: 'InputPeerChannel', channelId: Number(groupId), accessHash: String(groupAccessHash) };
           const full = await client.invoke(new Api.channels.GetFullChannel({ channel }));
-          let memberCount = full.fullChat?.participantsCount || 0;
-          if (!memberCount && full.chats?.[0]) {
-            memberCount = full.chats[0].participantsCount || 0;
-          }
+          let memberCount = 0;
+          if (full.fullChat && full.fullChat.participantsCount) memberCount = full.fullChat.participantsCount;
+          else if (full.chats && full.chats[0] && full.chats[0].participantsCount) memberCount = full.chats[0].participantsCount;
           await client.disconnect();
           return res.json({ success: true, memberCount });
         } catch (err) {
@@ -219,7 +204,7 @@ export default async function handler(req, res) {
       }
 
       default:
-        return res.status(400).json({ error: `Unknown action: ${action}` });
+        return res.status(400).json({ error: 'Invalid action' });
     }
   } catch (err) {
     console.error('Handler error:', err);
