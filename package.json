@@ -6,6 +6,6 @@
     "build": "echo 'Static site with serverless functions'"
   },
   "dependencies": {
-    "telegram": "^2.25.8"
+    "@mtproto/core": "^6.0.3"
   }
 }
