@@ -9,7 +9,7 @@ async function getClient(apiId, apiHash, sessionString) {
     const client = new TelegramClient(stringSession, Number(apiId), apiHash, {
       connectionRetries: 2,
       useWSS: true,
-      timeout: 30_000,
+      timeout: 30000,
     });
     await client.connect();
     return { client, stringSession };
@@ -25,22 +25,24 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Content-Type', 'application/json');
 
+  // Handle preflight request
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
 
+  // Only POST allowed
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
+  // Destructure request body
   let { action, apiId, apiHash, phone, code, password, sessionString, groupId, groupAccessHash, userId, userAccessHash, limit = 500 } = req.body;
 
-  // Validate required credentials
+  // Validate credentials
   if (!apiId || !apiHash) {
     return res.status(400).json({ error: 'API ID and API Hash are required' });
   }
 
-  // Convert apiId to number
   const apiIdNum = Number(apiId);
   if (isNaN(apiIdNum)) {
     return res.status(400).json({ error: 'API ID must be a number' });
@@ -65,11 +67,10 @@ export default async function handler(req, res) {
         if (!phone || !code) return res.status(400).json({ error: 'Phone and code required' });
         const { client, stringSession } = await getClient(apiIdNum, apiHash, '');
         try {
-          let result;
           if (password) {
-            result = await client.signInUserWithPassword(phone, password, { phoneCode: code });
+            await client.signInUserWithPassword(phone, password, { phoneCode: code });
           } else {
-            result = await client.signInUser(phone, code);
+            await client.signInUser(phone, code);
           }
           const newSession = stringSession.save();
           await client.disconnect();
@@ -203,7 +204,6 @@ export default async function handler(req, res) {
     }
   } catch (err) {
     console.error('Handler error:', err);
-    // Ensure we always return JSON, even for unexpected crashes
     return res.status(500).json({ error: 'Internal server error', details: err.message });
   }
 }
