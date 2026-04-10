@@ -9,6 +9,6 @@
     "build": "echo 'Static site with serverless functions'"
   },
   "dependencies": {
-    "@mtproto/core": "^6.0.4"
+    "@mtproto/core": "^5.2.1"
   }
 }
