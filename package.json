@@ -3,9 +3,11 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "build": "echo 'Static site with serverless functions'"
+    "build": "echo 'Static site with serverless functions'",
+    "start": "node server.js"
   },
   "dependencies": {
+    "express": "^4.18.2",
     "telegram": "^2.25.8"
   }
 }
