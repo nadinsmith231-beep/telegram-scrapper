@@ -2,27 +2,25 @@ import { Api } from 'telegram';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 
-// Helper: parse combined session (JSON with session and phone_code_hash)
-function parseSession(combined) {
-  try {
-    if (!combined) return { session: '', phone_code_hash: null };
-    const parsed = JSON.parse(combined);
-    return {
-      session: parsed.session || '',
-      phone_code_hash: parsed.phone_code_hash || null,
-    };
-  } catch {
-    // Fallback for old format (plain string session)
-    return { session: combined, phone_code_hash: null };
-  }
+// Helper: encode custom data into a single session string (for temporary storage)
+// We'll store a JSON object { authKey, phone_code_hash }.
+// After login, the phone_code_hash is cleared.
+function encodeSession(authKey, phoneCodeHash = null) {
+  const data = { authKey };
+  if (phoneCodeHash) data.phone_code_hash = phoneCodeHash;
+  return Buffer.from(JSON.stringify(data)).toString('base64');
 }
 
-// Helper: stringify combined session
-function stringifySession(sessionStr, phoneCodeHash = null) {
-  return JSON.stringify({
-    session: sessionStr,
-    phone_code_hash: phoneCodeHash,
-  });
+function decodeSession(sessionString) {
+  if (!sessionString) return { authKey: '', phone_code_hash: null };
+  try {
+    const json = Buffer.from(sessionString, 'base64').toString('utf8');
+    const data = JSON.parse(json);
+    return { authKey: data.authKey || '', phone_code_hash: data.phone_code_hash || null };
+  } catch {
+    // Fallback for old‑style plain session strings
+    return { authKey: sessionString, phone_code_hash: null };
+  }
 }
 
 export default async function handler(req, res) {
@@ -45,6 +43,7 @@ export default async function handler(req, res) {
     code,
     password,
     sessionString,
+    phoneCodeHash,   // <-- new field for the hash
     groupId,
     groupAccessHash,
     userId,
@@ -61,12 +60,13 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'API ID must be a number' });
   }
 
-  // Helper to create a GramJS client from a session string
-  const getClient = async (sessionStr) => {
-    const stringSession = new StringSession(sessionStr || '');
+  // Helper: create client from either a plain session or our encoded session
+  const getClient = async (session = '') => {
+    const { authKey } = decodeSession(session);
+    const stringSession = new StringSession(authKey);
     const client = new TelegramClient(stringSession, apiIdNum, apiHash, {
       connectionRetries: 2,
-      useWSS: false, // TCP transport works on Render
+      useWSS: false,
       timeout: 30000,
     });
     await client.connect();
@@ -77,13 +77,16 @@ export default async function handler(req, res) {
     switch (action) {
       case 'sendCode': {
         if (!phone) return res.status(400).json({ error: 'Phone number required' });
-        const client = await getClient('');
+        const client = await getClient(''); // empty session
         try {
           const result = await client.sendCode({ apiId: apiIdNum, apiHash }, phone);
-          // result.phone_code_hash is returned
-          const newCombinedSession = stringifySession(client.session.save(), result.phone_code_hash);
+          const newSession = encodeSession('', result.phone_code_hash);
           await client.disconnect();
-          return res.json({ success: true, sessionString: newCombinedSession });
+          return res.json({
+            success: true,
+            sessionString: newSession,   // contains the hash
+            phoneCodeHash: result.phone_code_hash, // also return separately for convenience
+          });
         } catch (err) {
           await client.disconnect();
           return res.status(400).json({ error: err.message });
@@ -92,31 +95,29 @@ export default async function handler(req, res) {
 
       case 'signIn': {
         if (!phone || !code) return res.status(400).json({ error: 'Phone and code required' });
-        const { session: savedSession, phone_code_hash } = parseSession(sessionString);
-        if (!phone_code_hash) {
+        // Get the phone_code_hash either from the sessionString or the explicit field
+        const { authKey, phone_code_hash: storedHash } = decodeSession(sessionString);
+        const effectiveHash = phoneCodeHash || storedHash;
+        if (!effectiveHash) {
           return res.status(400).json({ error: 'Missing phone_code_hash. Please request a new code.' });
         }
-        const client = await getClient(savedSession);
+        const client = await getClient(sessionString);
         try {
           let result;
           if (password) {
-            // 2FA login – you may need to adapt; this example uses standard signIn
-            // For 2FA, GramJS provides signInUserWithPassword
             result = await client.signInUserWithPassword(phone, password, { phoneCode: code });
           } else {
-            // Regular sign in – we need to use the stored phone_code_hash
-            // GramJS's signInUser expects the phone_code_hash
-            result = await client.signInUser(phone, code, phone_code_hash);
+            result = await client.signInUser(phone, code, effectiveHash);
           }
-          const newSession = client.session.save();
-          // After successful sign-in, the phone_code_hash is no longer needed; store only session
-          const finalSession = stringifySession(newSession, null);
+          // After successful login, save the auth key (the session) without the hash
+          const authKey = client.session.save();
+          const finalSession = encodeSession(authKey);
           await client.disconnect();
           return res.json({ success: true, sessionString: finalSession });
         } catch (err) {
           await client.disconnect();
           if (err.message.includes('SESSION_PASSWORD_NEEDED')) {
-            return res.status(400).json({ error: '2FA_REQUIRED', message: 'Two‑factor password required' });
+            return res.status(400).json({ error: '2FA_REQUIRED', message: '2FA password required' });
           }
           return res.status(400).json({ error: err.message });
         }
@@ -124,8 +125,7 @@ export default async function handler(req, res) {
 
       case 'getDialogs': {
         if (!sessionString) return res.status(400).json({ error: 'Session required' });
-        const { session: savedSession } = parseSession(sessionString);
-        const client = await getClient(savedSession);
+        const client = await getClient(sessionString);
         try {
           const dialogs = await client.getDialogs();
           const groups = dialogs
@@ -148,8 +148,7 @@ export default async function handler(req, res) {
         if (!sessionString || !groupId || !groupAccessHash) {
           return res.status(400).json({ error: 'Missing parameters' });
         }
-        const { session: savedSession } = parseSession(sessionString);
-        const client = await getClient(savedSession);
+        const client = await getClient(sessionString);
         try {
           const channel = { className: 'InputPeerChannel', channelId: Number(groupId), accessHash: String(groupAccessHash) };
           const members = [];
@@ -192,8 +191,7 @@ export default async function handler(req, res) {
         if (!sessionString || !groupId || !groupAccessHash || !userId || !userAccessHash) {
           return res.status(400).json({ error: 'Missing parameters' });
         }
-        const { session: savedSession } = parseSession(sessionString);
-        const client = await getClient(savedSession);
+        const client = await getClient(sessionString);
         try {
           const channel = { className: 'InputPeerChannel', channelId: Number(groupId), accessHash: String(groupAccessHash) };
           const user = { className: 'InputPeerUser', userId: Number(userId), accessHash: String(userAccessHash) };
@@ -221,8 +219,7 @@ export default async function handler(req, res) {
         if (!sessionString || !groupId || !groupAccessHash) {
           return res.status(400).json({ error: 'Missing parameters' });
         }
-        const { session: savedSession } = parseSession(sessionString);
-        const client = await getClient(savedSession);
+        const client = await getClient(sessionString);
         try {
           const channel = { className: 'InputPeerChannel', channelId: Number(groupId), accessHash: String(groupAccessHash) };
           const full = await client.invoke(new Api.channels.GetFullChannel({ channel }));
