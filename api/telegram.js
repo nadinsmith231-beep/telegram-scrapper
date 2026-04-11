@@ -43,7 +43,7 @@ export default async function handler(req, res) {
     const stringSession = new StringSession(session);
     const client = new TelegramClient(stringSession, apiIdNum, apiHash, {
       connectionRetries: 2,
-      useWSS: false, // Use TCP (HTTP) instead of WebSocket
+      useWSS: false,
       timeout: 30000,
     });
     await client.connect();
@@ -56,9 +56,11 @@ export default async function handler(req, res) {
         if (!phone) return res.status(400).json({ error: 'Phone number required' });
         const client = await getClient();
         try {
-          await client.sendCode({ apiId: apiIdNum, apiHash }, phone);
+          const result = await client.sendCode({ apiId: apiIdNum, apiHash }, phone);
           await client.disconnect();
-          return res.json({ success: true });
+          // Store phone_code_hash in a temporary session string
+          const tempSession = JSON.stringify({ phone_code_hash: result.phoneCodeHash });
+          return res.json({ success: true, sessionString: tempSession });
         } catch (err) {
           await client.disconnect();
           return res.status(400).json({ error: err.message });
@@ -67,13 +69,26 @@ export default async function handler(req, res) {
 
       case 'signIn': {
         if (!phone || !code) return res.status(400).json({ error: 'Phone and code required' });
+        // Extract phone_code_hash from the sessionString (sent from frontend after sendCode)
+        let phoneCodeHash = null;
+        if (sessionString) {
+          try {
+            const temp = JSON.parse(sessionString);
+            phoneCodeHash = temp.phone_code_hash;
+          } catch (e) {}
+        }
+        if (!phoneCodeHash) {
+          return res.status(400).json({ error: 'Missing phone_code_hash. Please request a new code.' });
+        }
+
         const client = await getClient();
         try {
           let result;
           if (password) {
             result = await client.signInUserWithPassword(phone, password, { phoneCode: code });
           } else {
-            result = await client.signInUser(phone, code);
+            // Use the phoneCodeHash option
+            result = await client.signInUser(phone, code, { phoneCodeHash });
           }
           const newSession = client.session.save();
           await client.disconnect();
