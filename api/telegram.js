@@ -1,6 +1,6 @@
 import { Api } from 'telegram';
 import { TelegramClient } from 'telegram';
-import { StringSession } from 'telegram/sessions';
+import { StringSession } from 'telegram/sessions/index.js';
 
 export default async function handler(req, res) {
   // CORS and JSON headers
@@ -38,17 +38,12 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'API ID must be a number' });
   }
 
-  // Helper: create client with HTTP transport (no WebSocket)
+  // Helper: create client (default settings, works on Render)
   const getClient = async (session = '') => {
     const stringSession = new StringSession(session);
     const client = new TelegramClient(stringSession, apiIdNum, apiHash, {
       connectionRetries: 2,
-      // Use HTTP transport instead of WebSocket
-      transport: (apiIdNum, apiHash, dcId) => {
-        // Use the default TCP transport (MTProto over TCP) – works on Vercel
-        const { TCPTransport } = require('telegram/network/MTProtoPlainSender');
-        return new TCPTransport();
-      },
+      useWSS: false, // Use TCP (HTTP) instead of WebSocket
       timeout: 30000,
     });
     await client.connect();
