@@ -128,7 +128,7 @@
 <script>
     const API_BASE = '/api/telegram';
     
-    // DOM elements (same as before)
+    // DOM elements
     const apiIdInput = document.getElementById('apiId');
     const apiHashInput = document.getElementById('apiHash');
     const phoneInput = document.getElementById('phoneNumber');
@@ -154,8 +154,9 @@
     const addDelayInput = document.getElementById('addDelaySec');
     const progressFill = document.getElementById('progressFill');
     
-    // State – only one variable: sessionString (stores both authKey and temporary hash)
+    // State
     let sessionString = localStorage.getItem('tg_session') || '';
+    let phoneCodeHash = localStorage.getItem('tg_phone_code_hash') || '';
     let scrapedMembers = [];
     let isAddingActive = false;
     let stopRequested = false;
@@ -208,6 +209,7 @@
             apiHash,
             phone,
             sessionString,
+            phoneCodeHash,   // always include the stored hash (empty if not set)
             ...payload
         };
         
@@ -239,9 +241,9 @@
         try {
             const result = await callApi('sendCode');
             addLog(`✅ Code sent! Check your Telegram app.`, 'success');
-            if (result.sessionString) {
-                sessionString = result.sessionString;
-                localStorage.setItem('tg_session', sessionString);
+            if (result.phoneCodeHash) {
+                phoneCodeHash = result.phoneCodeHash;
+                localStorage.setItem('tg_phone_code_hash', phoneCodeHash);
             }
             codeSection.classList.remove('hidden');
             verifyBtn.classList.remove('hidden');
@@ -262,6 +264,9 @@
             if (result.sessionString) {
                 sessionString = result.sessionString;
                 localStorage.setItem('tg_session', sessionString);
+                // Clear temporary hash after successful login
+                phoneCodeHash = '';
+                localStorage.removeItem('tg_phone_code_hash');
                 localStorage.setItem('tg_api_id', apiIdInput.value);
                 localStorage.setItem('tg_api_hash', apiHashInput.value);
                 localStorage.setItem('tg_phone', phoneInput.value);
@@ -284,7 +289,9 @@
     
     logoutBtn.onclick = () => {
         sessionString = '';
+        phoneCodeHash = '';
         localStorage.removeItem('tg_session');
+        localStorage.removeItem('tg_phone_code_hash');
         localStorage.removeItem('tg_api_id');
         localStorage.removeItem('tg_api_hash');
         localStorage.removeItem('tg_phone');
