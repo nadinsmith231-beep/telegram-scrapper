@@ -210,7 +210,7 @@
             apiHash,
             phone,
             sessionString,
-            phoneCodeHash,   // always send the stored hash (if any)
+            phoneCodeHash,
             ...payload
         };
         
@@ -222,9 +222,10 @@
             });
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+            // Log the full response for debugging
+            console.log('API response:', data);
             return data;
         } catch (err) {
-            // Display the exact error message from the server
             addLog(`API Error: ${err.message}`, 'error');
             throw err;
         }
@@ -242,12 +243,14 @@
         addLog(`📲 Sending verification code to ${phone}...`, 'info');
         try {
             const result = await callApi('sendCode');
+            addLog(`Full response: ${JSON.stringify(result)}`, 'info');
             if (result.phoneCodeHash) {
                 phoneCodeHash = result.phoneCodeHash;
                 localStorage.setItem('tg_phone_code_hash', phoneCodeHash);
                 addLog(`✅ Code sent! Hash stored: ${phoneCodeHash.substring(0, 10)}...`, 'success');
             } else {
-                addLog(`✅ Code sent, but no hash returned!`, 'warning');
+                addLog(`❌ Code sent but no hash in response! Backend returned: ${JSON.stringify(result)}`, 'error');
+                return;
             }
             codeSection.classList.remove('hidden');
             verifyBtn.classList.remove('hidden');
@@ -269,7 +272,6 @@
             if (result.sessionString) {
                 sessionString = result.sessionString;
                 localStorage.setItem('tg_session', sessionString);
-                // Clear temporary hash after successful login
                 phoneCodeHash = '';
                 localStorage.removeItem('tg_phone_code_hash');
                 localStorage.setItem('tg_api_id', apiIdInput.value);
