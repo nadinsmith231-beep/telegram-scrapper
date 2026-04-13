@@ -210,7 +210,7 @@
             apiHash,
             phone,
             sessionString,
-            phoneCodeHash,   // <-- always send the stored hash
+            phoneCodeHash,   // always send the stored hash (if any)
             ...payload
         };
         
@@ -221,9 +221,10 @@
                 body: JSON.stringify(body)
             });
             const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Request failed');
+            if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
             return data;
         } catch (err) {
+            // Display the exact error message from the server
             addLog(`API Error: ${err.message}`, 'error');
             throw err;
         }
@@ -244,9 +245,9 @@
             if (result.phoneCodeHash) {
                 phoneCodeHash = result.phoneCodeHash;
                 localStorage.setItem('tg_phone_code_hash', phoneCodeHash);
-                addLog(`✅ Code sent! Hash stored.`, 'success');
+                addLog(`✅ Code sent! Hash stored: ${phoneCodeHash.substring(0, 10)}...`, 'success');
             } else {
-                addLog(`✅ Code sent! (no hash returned)`, 'success');
+                addLog(`✅ Code sent, but no hash returned!`, 'warning');
             }
             codeSection.classList.remove('hidden');
             verifyBtn.classList.remove('hidden');
@@ -262,13 +263,13 @@
         const password = twoFactorInput.value;
         if (!code) { addLog('Enter verification code', 'warning'); return; }
         addLog(`🔐 Verifying code...`, 'info');
+        addLog(`Sending phoneCodeHash: ${phoneCodeHash ? phoneCodeHash.substring(0, 10) : 'NULL'}...`, 'info');
         try {
-            // phoneCodeHash is already in the global state and will be sent via callApi
             const result = await callApi('signIn', { code, password: password || undefined });
             if (result.sessionString) {
                 sessionString = result.sessionString;
                 localStorage.setItem('tg_session', sessionString);
-                // Clear the temporary hash after successful login
+                // Clear temporary hash after successful login
                 phoneCodeHash = '';
                 localStorage.removeItem('tg_phone_code_hash');
                 localStorage.setItem('tg_api_id', apiIdInput.value);
