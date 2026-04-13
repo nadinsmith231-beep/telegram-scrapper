@@ -22,7 +22,7 @@
 </head>
 <body class="text-gray-200 p-4 md:p-6">
 <div class="max-w-6xl mx-auto">
-    <!-- Header -->
+    <!-- Header same as before -->
     <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
         <div class="flex items-center gap-3">
             <div class="bg-blue-600 p-2 rounded-2xl shadow-lg"><i class="fab fa-telegram text-3xl text-white"></i></div>
@@ -127,10 +127,9 @@
 </div>
 
 <script>
-    // Configuration
     const API_BASE = '/api/telegram';
     
-    // DOM Elements
+    // DOM elements (same as before)
     const apiIdInput = document.getElementById('apiId');
     const apiHashInput = document.getElementById('apiHash');
     const phoneInput = document.getElementById('phoneNumber');
@@ -158,6 +157,7 @@
     
     // State
     let sessionString = localStorage.getItem('tg_session') || '';
+    let tempSessionId = localStorage.getItem('tg_temp_session') || '';
     let phoneCodeHash = localStorage.getItem('tg_phone_code_hash') || '';
     let scrapedMembers = [];
     let isAddingActive = false;
@@ -166,7 +166,6 @@
     let currentGroupMemberCountBefore = 0;
     let batchAddCount = 0;
     
-    // Helper Functions
     function addLog(msg, type = 'info') {
         const logDiv = document.createElement('div');
         const timestamp = new Date().toLocaleTimeString();
@@ -212,7 +211,8 @@
             apiHash,
             phone,
             sessionString,
-            phoneCodeHash,   // send the stored code hash when signing in
+            tempSessionId,
+            phoneCodeHash,
             ...payload
         };
         
@@ -231,7 +231,6 @@
         }
     }
     
-    // Login Flow
     loginBtn.onclick = async () => {
         const apiId = apiIdInput.value.trim();
         const apiHash = apiHashInput.value.trim();
@@ -244,14 +243,14 @@
         try {
             const result = await callApi('sendCode');
             addLog(`✅ Code sent! Check your Telegram app.`, 'success');
-            // Store the phone_code_hash returned by the backend
+            // Store the temporary session data
+            if (result.tempSessionId) {
+                tempSessionId = result.tempSessionId;
+                localStorage.setItem('tg_temp_session', tempSessionId);
+            }
             if (result.phoneCodeHash) {
                 phoneCodeHash = result.phoneCodeHash;
                 localStorage.setItem('tg_phone_code_hash', phoneCodeHash);
-            } else if (result.sessionString) {
-                // If backend returns sessionString containing the hash (legacy fallback)
-                // In our new backend, we return a separate phoneCodeHash field.
-                // But we also might want to decode? For simplicity we rely on the explicit field.
             }
             codeSection.classList.remove('hidden');
             verifyBtn.classList.remove('hidden');
@@ -267,17 +266,15 @@
         if (!code) { addLog('Enter verification code', 'warning'); return; }
         addLog(`🔐 Verifying code...`, 'info');
         try {
-            const result = await callApi('signIn', { 
-                code, 
-                password: password || undefined,
-                // phoneCodeHash is already in the base payload
-            });
+            const result = await callApi('signIn', { code, password: password || undefined });
             if (result.sessionString) {
                 sessionString = result.sessionString;
-                // Clear the temporary phone code hash after successful login
-                phoneCodeHash = '';
-                localStorage.removeItem('tg_phone_code_hash');
                 localStorage.setItem('tg_session', sessionString);
+                // Clear temporary data
+                tempSessionId = '';
+                phoneCodeHash = '';
+                localStorage.removeItem('tg_temp_session');
+                localStorage.removeItem('tg_phone_code_hash');
                 localStorage.setItem('tg_api_id', apiIdInput.value);
                 localStorage.setItem('tg_api_hash', apiHashInput.value);
                 localStorage.setItem('tg_phone', phoneInput.value);
@@ -300,8 +297,10 @@
     
     logoutBtn.onclick = () => {
         sessionString = '';
+        tempSessionId = '';
         phoneCodeHash = '';
         localStorage.removeItem('tg_session');
+        localStorage.removeItem('tg_temp_session');
         localStorage.removeItem('tg_phone_code_hash');
         localStorage.removeItem('tg_api_id');
         localStorage.removeItem('tg_api_hash');
@@ -494,11 +493,9 @@
         const savedApiId = localStorage.getItem('tg_api_id');
         const savedApiHash = localStorage.getItem('tg_api_hash');
         const savedPhone = localStorage.getItem('tg_phone');
-        const savedHash = localStorage.getItem('tg_phone_code_hash');
         if (savedApiId) apiIdInput.value = savedApiId;
         if (savedApiHash) apiHashInput.value = savedApiHash;
         if (savedPhone) phoneInput.value = savedPhone;
-        if (savedHash) phoneCodeHash = savedHash;
         sessionStatusDiv.classList.remove('hidden');
         sessionStatusDiv.innerHTML = `<i class="fas fa-check-circle text-green-400 mr-1"></i> Session restored`;
         logoutBtn.classList.remove('hidden');
