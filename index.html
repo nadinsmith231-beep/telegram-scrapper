@@ -22,7 +22,7 @@
 </head>
 <body class="text-gray-200 p-4 md:p-6">
 <div class="max-w-6xl mx-auto">
-    <!-- Header -->
+    <!-- Header same as before -->
     <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
         <div class="flex items-center gap-3">
             <div class="bg-blue-600 p-2 rounded-2xl shadow-lg"><i class="fab fa-telegram text-3xl text-white"></i></div>
@@ -129,7 +129,7 @@
 <script>
     const API_BASE = '/api/telegram';
     
-    // DOM elements
+    // DOM elements (same as before)
     const apiIdInput = document.getElementById('apiId');
     const apiHashInput = document.getElementById('apiHash');
     const phoneInput = document.getElementById('phoneNumber');
@@ -157,6 +157,7 @@
     
     // State
     let sessionString = localStorage.getItem('tg_session') || '';
+    let tempSessionId = localStorage.getItem('tg_temp_session') || '';
     let phoneCodeHash = localStorage.getItem('tg_phone_code_hash') || '';
     let scrapedMembers = [];
     let isAddingActive = false;
@@ -210,6 +211,7 @@
             apiHash,
             phone,
             sessionString,
+            tempSessionId,
             phoneCodeHash,
             ...payload
         };
@@ -221,9 +223,7 @@
                 body: JSON.stringify(body)
             });
             const data = await response.json();
-            if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-            // Log the full response for debugging
-            console.log('API response:', data);
+            if (!response.ok) throw new Error(data.error || 'Request failed');
             return data;
         } catch (err) {
             addLog(`API Error: ${err.message}`, 'error');
@@ -231,7 +231,6 @@
         }
     }
     
-    // Send code
     loginBtn.onclick = async () => {
         const apiId = apiIdInput.value.trim();
         const apiHash = apiHashInput.value.trim();
@@ -243,14 +242,15 @@
         addLog(`📲 Sending verification code to ${phone}...`, 'info');
         try {
             const result = await callApi('sendCode');
-            addLog(`Full response: ${JSON.stringify(result)}`, 'info');
+            addLog(`✅ Code sent! Check your Telegram app.`, 'success');
+            // Store the temporary session data
+            if (result.tempSessionId) {
+                tempSessionId = result.tempSessionId;
+                localStorage.setItem('tg_temp_session', tempSessionId);
+            }
             if (result.phoneCodeHash) {
                 phoneCodeHash = result.phoneCodeHash;
                 localStorage.setItem('tg_phone_code_hash', phoneCodeHash);
-                addLog(`✅ Code sent! Hash stored: ${phoneCodeHash.substring(0, 10)}...`, 'success');
-            } else {
-                addLog(`❌ Code sent but no hash in response! Backend returned: ${JSON.stringify(result)}`, 'error');
-                return;
             }
             codeSection.classList.remove('hidden');
             verifyBtn.classList.remove('hidden');
@@ -260,19 +260,20 @@
         }
     };
     
-    // Verify code
     verifyBtn.onclick = async () => {
         const code = verificationCodeInput.value.trim();
         const password = twoFactorInput.value;
         if (!code) { addLog('Enter verification code', 'warning'); return; }
         addLog(`🔐 Verifying code...`, 'info');
-        addLog(`Sending phoneCodeHash: ${phoneCodeHash ? phoneCodeHash.substring(0, 10) : 'NULL'}...`, 'info');
         try {
             const result = await callApi('signIn', { code, password: password || undefined });
             if (result.sessionString) {
                 sessionString = result.sessionString;
                 localStorage.setItem('tg_session', sessionString);
+                // Clear temporary data
+                tempSessionId = '';
                 phoneCodeHash = '';
+                localStorage.removeItem('tg_temp_session');
                 localStorage.removeItem('tg_phone_code_hash');
                 localStorage.setItem('tg_api_id', apiIdInput.value);
                 localStorage.setItem('tg_api_hash', apiHashInput.value);
@@ -296,8 +297,10 @@
     
     logoutBtn.onclick = () => {
         sessionString = '';
+        tempSessionId = '';
         phoneCodeHash = '';
         localStorage.removeItem('tg_session');
+        localStorage.removeItem('tg_temp_session');
         localStorage.removeItem('tg_phone_code_hash');
         localStorage.removeItem('tg_api_id');
         localStorage.removeItem('tg_api_hash');
@@ -490,11 +493,9 @@
         const savedApiId = localStorage.getItem('tg_api_id');
         const savedApiHash = localStorage.getItem('tg_api_hash');
         const savedPhone = localStorage.getItem('tg_phone');
-        const savedHash = localStorage.getItem('tg_phone_code_hash');
         if (savedApiId) apiIdInput.value = savedApiId;
         if (savedApiHash) apiHashInput.value = savedApiHash;
         if (savedPhone) phoneInput.value = savedPhone;
-        if (savedHash) phoneCodeHash = savedHash;
         sessionStatusDiv.classList.remove('hidden');
         sessionStatusDiv.innerHTML = `<i class="fas fa-check-circle text-green-400 mr-1"></i> Session restored`;
         logoutBtn.classList.remove('hidden');
