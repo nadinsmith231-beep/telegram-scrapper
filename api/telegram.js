@@ -2,22 +2,6 @@ import { Api } from 'telegram';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 
-// Helper to encode session data (authKey + phone_code_hash) into a single string
-function encodeSession(authKey = '', phoneCodeHash = '') {
-  const data = { authKey, phoneCodeHash };
-  return Buffer.from(JSON.stringify(data)).toString('base64');
-}
-
-function decodeSession(sessionString) {
-  if (!sessionString) return { authKey: '', phoneCodeHash: '' };
-  try {
-    const json = Buffer.from(sessionString, 'base64').toString('utf8');
-    return JSON.parse(json);
-  } catch {
-    return { authKey: sessionString, phoneCodeHash: '' };
-  }
-}
-
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -34,7 +18,8 @@ export default async function handler(req, res) {
     phone,
     code,
     password,
-    sessionString,   // this now carries both authKey and temporary hash
+    sessionString,
+    phoneCodeHash,   // <-- will be sent from frontend for signIn
     groupId,
     groupAccessHash,
     userId,
@@ -42,12 +27,16 @@ export default async function handler(req, res) {
     limit = 500,
   } = req.body;
 
-  if (!apiId || !apiHash) return res.status(400).json({ error: 'API ID and API Hash are required' });
+  if (!apiId || !apiHash) {
+    return res.status(400).json({ error: 'API ID and API Hash are required' });
+  }
   const apiIdNum = Number(apiId);
-  if (isNaN(apiIdNum)) return res.status(400).json({ error: 'API ID must be a number' });
+  if (isNaN(apiIdNum)) {
+    return res.status(400).json({ error: 'API ID must be a number' });
+  }
 
-  const getClient = async (authKey = '') => {
-    const stringSession = new StringSession(authKey);
+  const getClient = async (session = '') => {
+    const stringSession = new StringSession(session);
     const client = new TelegramClient(stringSession, apiIdNum, apiHash, {
       connectionRetries: 2,
       useWSS: false,
@@ -65,9 +54,11 @@ export default async function handler(req, res) {
         try {
           const result = await client.sendCode({ apiId: apiIdNum, apiHash }, phone);
           await client.disconnect();
-          // Store the hash in a new session string (authKey is empty for now)
-          const newSession = encodeSession('', result.phone_code_hash);
-          return res.json({ success: true, sessionString: newSession });
+          // Return the hash to the frontend
+          return res.json({
+            success: true,
+            phoneCodeHash: result.phone_code_hash,
+          });
         } catch (err) {
           await client.disconnect();
           return res.status(400).json({ error: err.message });
@@ -76,11 +67,10 @@ export default async function handler(req, res) {
 
       case 'signIn': {
         if (!phone || !code) return res.status(400).json({ error: 'Phone and code required' });
-        const { authKey, phoneCodeHash } = decodeSession(sessionString);
         if (!phoneCodeHash) {
           return res.status(400).json({ error: 'Missing phone_code_hash. Please request a new code.' });
         }
-        const client = await getClient(authKey);
+        const client = await getClient(); // empty session
         try {
           let result;
           if (password) {
@@ -88,11 +78,10 @@ export default async function handler(req, res) {
           } else {
             result = await client.signInUser(phone, code, phoneCodeHash);
           }
-          const newAuthKey = client.session.save();
+          const authKey = client.session.save();
           await client.disconnect();
-          // After successful login, return a session string that contains only the authKey
-          const finalSession = encodeSession(newAuthKey, '');
-          return res.json({ success: true, sessionString: finalSession });
+          // Return the permanent session string (no hash inside)
+          return res.json({ success: true, sessionString: authKey });
         } catch (err) {
           await client.disconnect();
           if (err.message.includes('SESSION_PASSWORD_NEEDED')) {
@@ -102,11 +91,10 @@ export default async function handler(req, res) {
         }
       }
 
-      // -------- all other actions remain unchanged, using sessionString as is ---------
+      // ---- all other actions unchanged, using sessionString as is ----
       case 'getDialogs': {
         if (!sessionString) return res.status(400).json({ error: 'Session required' });
-        const { authKey } = decodeSession(sessionString);
-        const client = await getClient(authKey);
+        const client = await getClient(sessionString);
         try {
           const dialogs = await client.getDialogs();
           const groups = dialogs
@@ -127,8 +115,7 @@ export default async function handler(req, res) {
 
       case 'scrapeMembers': {
         if (!sessionString || !groupId || !groupAccessHash) return res.status(400).json({ error: 'Missing parameters' });
-        const { authKey } = decodeSession(sessionString);
-        const client = await getClient(authKey);
+        const client = await getClient(sessionString);
         try {
           const channel = { className: 'InputPeerChannel', channelId: Number(groupId), accessHash: String(groupAccessHash) };
           const members = [];
@@ -169,8 +156,7 @@ export default async function handler(req, res) {
         if (!sessionString || !groupId || !groupAccessHash || !userId || !userAccessHash) {
           return res.status(400).json({ error: 'Missing parameters' });
         }
-        const { authKey } = decodeSession(sessionString);
-        const client = await getClient(authKey);
+        const client = await getClient(sessionString);
         try {
           const channel = { className: 'InputPeerChannel', channelId: Number(groupId), accessHash: String(groupAccessHash) };
           const user = { className: 'InputPeerUser', userId: Number(userId), accessHash: String(userAccessHash) };
@@ -189,8 +175,7 @@ export default async function handler(req, res) {
 
       case 'getGroupInfo': {
         if (!sessionString || !groupId || !groupAccessHash) return res.status(400).json({ error: 'Missing parameters' });
-        const { authKey } = decodeSession(sessionString);
-        const client = await getClient(authKey);
+        const client = await getClient(sessionString);
         try {
           const channel = { className: 'InputPeerChannel', channelId: Number(groupId), accessHash: String(groupAccessHash) };
           const full = await client.invoke(new Api.channels.GetFullChannel({ channel }));
