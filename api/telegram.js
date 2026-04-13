@@ -2,10 +2,6 @@ import { Api } from 'telegram';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 
-// Temporary in‑memory store for phone_code_hash (since Render may have multiple instances, but it's fine for demo)
-// In production, use Redis or database, but for this tool it's acceptable.
-const tempStore = new Map();
-
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -23,7 +19,7 @@ export default async function handler(req, res) {
     code,
     password,
     sessionString,
-    phoneCodeHash,   // explicit hash for signIn
+    phoneCodeHash,   // sent from frontend for signIn
     groupId,
     groupAccessHash,
     userId,
@@ -58,17 +54,11 @@ export default async function handler(req, res) {
         const client = await getClient();
         try {
           const result = await client.sendCode({ apiId: apiIdNum, apiHash }, phone);
-          const hash = result.phone_code_hash;
-          // Generate a temporary ID for this hash (using phone number as key)
-          const tempId = `temp_${phone}_${Date.now()}`;
-          tempStore.set(tempId, hash);
-          // Also keep it for 10 minutes (auto cleanup)
-          setTimeout(() => tempStore.delete(tempId), 10 * 60 * 1000);
           await client.disconnect();
+          // Return the hash to the frontend – no server storage
           return res.json({
             success: true,
-            tempSessionId: tempId,   // send back this ID
-            phoneCodeHash: hash,      // also send the hash directly
+            phoneCodeHash: result.phone_code_hash,
           });
         } catch (err) {
           await client.disconnect();
@@ -78,26 +68,19 @@ export default async function handler(req, res) {
 
       case 'signIn': {
         if (!phone || !code) return res.status(400).json({ error: 'Phone and code required' });
-        // Get the hash from either the explicit phoneCodeHash or from the tempStore using tempSessionId
-        let effectiveHash = phoneCodeHash;
-        if (!effectiveHash && req.body.tempSessionId) {
-          effectiveHash = tempStore.get(req.body.tempSessionId);
-        }
-        if (!effectiveHash) {
+        if (!phoneCodeHash) {
           return res.status(400).json({ error: 'Missing phone_code_hash. Please request a new code.' });
         }
-        const client = await getClient(); // start with empty session
+        const client = await getClient();
         try {
           let result;
           if (password) {
             result = await client.signInUserWithPassword(phone, password, { phoneCode: code });
           } else {
-            result = await client.signInUser(phone, code, effectiveHash);
+            result = await client.signInUser(phone, code, phoneCodeHash);
           }
           const authKey = client.session.save();
           await client.disconnect();
-          // Clean up the temporary hash
-          if (req.body.tempSessionId) tempStore.delete(req.body.tempSessionId);
           return res.json({ success: true, sessionString: authKey });
         } catch (err) {
           await client.disconnect();
@@ -108,7 +91,7 @@ export default async function handler(req, res) {
         }
       }
 
-      // All other actions (getDialogs, scrapeMembers, addMember, getGroupInfo) remain the same
+      // All other actions (unchanged)
       case 'getDialogs': {
         if (!sessionString) return res.status(400).json({ error: 'Session required' });
         const client = await getClient(sessionString);
