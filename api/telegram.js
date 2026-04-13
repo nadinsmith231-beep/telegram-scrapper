@@ -2,6 +2,10 @@ import { Api } from 'telegram';
 import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 
+// Temporary in‑memory store for phone_code_hash (since Render may have multiple instances, but it's fine for demo)
+// In production, use Redis or database, but for this tool it's acceptable.
+const tempStore = new Map();
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -19,7 +23,7 @@ export default async function handler(req, res) {
     code,
     password,
     sessionString,
-    phoneCodeHash,
+    phoneCodeHash,   // explicit hash for signIn
     groupId,
     groupAccessHash,
     userId,
@@ -30,6 +34,7 @@ export default async function handler(req, res) {
   if (!apiId || !apiHash) {
     return res.status(400).json({ error: 'API ID and API Hash are required' });
   }
+
   const apiIdNum = Number(apiId);
   if (isNaN(apiIdNum)) {
     return res.status(400).json({ error: 'API ID must be a number' });
@@ -52,40 +57,47 @@ export default async function handler(req, res) {
         if (!phone) return res.status(400).json({ error: 'Phone number required' });
         const client = await getClient();
         try {
-          // The sendCode method returns an object with phone_code_hash
           const result = await client.sendCode({ apiId: apiIdNum, apiHash }, phone);
-          console.log('sendCode result:', JSON.stringify(result, null, 2)); // Log to Render
           const hash = result.phone_code_hash;
-          if (!hash) {
-            throw new Error('No phone_code_hash returned from Telegram');
-          }
+          // Generate a temporary ID for this hash (using phone number as key)
+          const tempId = `temp_${phone}_${Date.now()}`;
+          tempStore.set(tempId, hash);
+          // Also keep it for 10 minutes (auto cleanup)
+          setTimeout(() => tempStore.delete(tempId), 10 * 60 * 1000);
           await client.disconnect();
           return res.json({
             success: true,
-            phoneCodeHash: hash,
+            tempSessionId: tempId,   // send back this ID
+            phoneCodeHash: hash,      // also send the hash directly
           });
         } catch (err) {
           await client.disconnect();
-          console.error('sendCode error:', err);
           return res.status(400).json({ error: err.message });
         }
       }
 
       case 'signIn': {
         if (!phone || !code) return res.status(400).json({ error: 'Phone and code required' });
-        if (!phoneCodeHash) {
+        // Get the hash from either the explicit phoneCodeHash or from the tempStore using tempSessionId
+        let effectiveHash = phoneCodeHash;
+        if (!effectiveHash && req.body.tempSessionId) {
+          effectiveHash = tempStore.get(req.body.tempSessionId);
+        }
+        if (!effectiveHash) {
           return res.status(400).json({ error: 'Missing phone_code_hash. Please request a new code.' });
         }
-        const client = await getClient();
+        const client = await getClient(); // start with empty session
         try {
           let result;
           if (password) {
             result = await client.signInUserWithPassword(phone, password, { phoneCode: code });
           } else {
-            result = await client.signInUser(phone, code, phoneCodeHash);
+            result = await client.signInUser(phone, code, effectiveHash);
           }
           const authKey = client.session.save();
           await client.disconnect();
+          // Clean up the temporary hash
+          if (req.body.tempSessionId) tempStore.delete(req.body.tempSessionId);
           return res.json({ success: true, sessionString: authKey });
         } catch (err) {
           await client.disconnect();
@@ -96,6 +108,7 @@ export default async function handler(req, res) {
         }
       }
 
+      // All other actions (getDialogs, scrapeMembers, addMember, getGroupInfo) remain the same
       case 'getDialogs': {
         if (!sessionString) return res.status(400).json({ error: 'Session required' });
         const client = await getClient(sessionString);
