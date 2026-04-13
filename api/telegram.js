@@ -3,13 +3,16 @@ import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 
 export default async function handler(req, res) {
+  // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   res.setHeader('Content-Type', 'application/json');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== 'POST') {
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
 
   const {
     action,
@@ -19,7 +22,7 @@ export default async function handler(req, res) {
     code,
     password,
     sessionString,
-    phoneCodeHash,
+    phoneCodeHash,   // sent from frontend during signIn
     groupId,
     groupAccessHash,
     userId,
@@ -27,15 +30,16 @@ export default async function handler(req, res) {
     limit = 500,
   } = req.body;
 
+  // Validate API credentials
   if (!apiId || !apiHash) {
     return res.status(400).json({ error: 'API ID and API Hash are required' });
   }
-
   const apiIdNum = Number(apiId);
   if (isNaN(apiIdNum)) {
     return res.status(400).json({ error: 'API ID must be a number' });
   }
 
+  // Helper to create a Telegram client
   const getClient = async (session = '') => {
     const stringSession = new StringSession(session);
     const client = new TelegramClient(stringSession, apiIdNum, apiHash, {
@@ -55,7 +59,7 @@ export default async function handler(req, res) {
         try {
           const result = await client.sendCode({ apiId: apiIdNum, apiHash }, phone);
           await client.disconnect();
-          // Return the hash directly to the frontend
+          // Return the phone_code_hash to the frontend
           return res.json({
             success: true,
             phoneCodeHash: result.phone_code_hash,
@@ -91,6 +95,7 @@ export default async function handler(req, res) {
         }
       }
 
+      // Other actions (unchanged, but ensure they work)
       case 'getDialogs': {
         if (!sessionString) return res.status(400).json({ error: 'Session required' });
         const client = await getClient(sessionString);
