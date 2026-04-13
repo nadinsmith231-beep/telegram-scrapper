@@ -22,7 +22,7 @@
 </head>
 <body class="text-gray-200 p-4 md:p-6">
 <div class="max-w-6xl mx-auto">
-    <!-- Header same as before -->
+    <!-- Header -->
     <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
         <div class="flex items-center gap-3">
             <div class="bg-blue-600 p-2 rounded-2xl shadow-lg"><i class="fab fa-telegram text-3xl text-white"></i></div>
@@ -34,7 +34,7 @@
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Left Column -->
+        <!-- Left Column (same as before) -->
         <div class="lg:col-span-1 space-y-5">
             <div class="glass-card rounded-2xl p-5 shadow-xl">
                 <div class="flex items-center gap-2 border-b border-gray-700 pb-3 mb-4">
@@ -129,7 +129,7 @@
 <script>
     const API_BASE = '/api/telegram';
     
-    // DOM elements (same as before)
+    // DOM elements
     const apiIdInput = document.getElementById('apiId');
     const apiHashInput = document.getElementById('apiHash');
     const phoneInput = document.getElementById('phoneNumber');
@@ -157,7 +157,6 @@
     
     // State
     let sessionString = localStorage.getItem('tg_session') || '';
-    let tempSessionId = localStorage.getItem('tg_temp_session') || '';
     let phoneCodeHash = localStorage.getItem('tg_phone_code_hash') || '';
     let scrapedMembers = [];
     let isAddingActive = false;
@@ -211,8 +210,7 @@
             apiHash,
             phone,
             sessionString,
-            tempSessionId,
-            phoneCodeHash,
+            phoneCodeHash,   // always send the stored hash (empty if not set)
             ...payload
         };
         
@@ -243,11 +241,6 @@
         try {
             const result = await callApi('sendCode');
             addLog(`✅ Code sent! Check your Telegram app.`, 'success');
-            // Store the temporary session data
-            if (result.tempSessionId) {
-                tempSessionId = result.tempSessionId;
-                localStorage.setItem('tg_temp_session', tempSessionId);
-            }
             if (result.phoneCodeHash) {
                 phoneCodeHash = result.phoneCodeHash;
                 localStorage.setItem('tg_phone_code_hash', phoneCodeHash);
@@ -270,10 +263,8 @@
             if (result.sessionString) {
                 sessionString = result.sessionString;
                 localStorage.setItem('tg_session', sessionString);
-                // Clear temporary data
-                tempSessionId = '';
+                // Clear temporary hash after successful login
                 phoneCodeHash = '';
-                localStorage.removeItem('tg_temp_session');
                 localStorage.removeItem('tg_phone_code_hash');
                 localStorage.setItem('tg_api_id', apiIdInput.value);
                 localStorage.setItem('tg_api_hash', apiHashInput.value);
@@ -297,10 +288,8 @@
     
     logoutBtn.onclick = () => {
         sessionString = '';
-        tempSessionId = '';
         phoneCodeHash = '';
         localStorage.removeItem('tg_session');
-        localStorage.removeItem('tg_temp_session');
         localStorage.removeItem('tg_phone_code_hash');
         localStorage.removeItem('tg_api_id');
         localStorage.removeItem('tg_api_hash');
