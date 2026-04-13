@@ -22,7 +22,6 @@
 </head>
 <body class="text-gray-200 p-4 md:p-6">
 <div class="max-w-6xl mx-auto">
-    <!-- Header -->
     <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
         <div class="flex items-center gap-3">
             <div class="bg-blue-600 p-2 rounded-2xl shadow-lg"><i class="fab fa-telegram text-3xl text-white"></i></div>
@@ -34,7 +33,7 @@
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Left Column (same as before) -->
+        <!-- Left Column -->
         <div class="lg:col-span-1 space-y-5">
             <div class="glass-card rounded-2xl p-5 shadow-xl">
                 <div class="flex items-center gap-2 border-b border-gray-700 pb-3 mb-4">
@@ -129,7 +128,7 @@
 <script>
     const API_BASE = '/api/telegram';
     
-    // DOM elements
+    // DOM elements (same as before)
     const apiIdInput = document.getElementById('apiId');
     const apiHashInput = document.getElementById('apiHash');
     const phoneInput = document.getElementById('phoneNumber');
@@ -155,9 +154,8 @@
     const addDelayInput = document.getElementById('addDelaySec');
     const progressFill = document.getElementById('progressFill');
     
-    // State
+    // State – only one variable: sessionString (stores both authKey and temporary hash)
     let sessionString = localStorage.getItem('tg_session') || '';
-    let phoneCodeHash = localStorage.getItem('tg_phone_code_hash') || '';
     let scrapedMembers = [];
     let isAddingActive = false;
     let stopRequested = false;
@@ -210,7 +208,6 @@
             apiHash,
             phone,
             sessionString,
-            phoneCodeHash,   // always send the stored hash (empty if not set)
             ...payload
         };
         
@@ -229,6 +226,7 @@
         }
     }
     
+    // Send code
     loginBtn.onclick = async () => {
         const apiId = apiIdInput.value.trim();
         const apiHash = apiHashInput.value.trim();
@@ -241,9 +239,9 @@
         try {
             const result = await callApi('sendCode');
             addLog(`✅ Code sent! Check your Telegram app.`, 'success');
-            if (result.phoneCodeHash) {
-                phoneCodeHash = result.phoneCodeHash;
-                localStorage.setItem('tg_phone_code_hash', phoneCodeHash);
+            if (result.sessionString) {
+                sessionString = result.sessionString;
+                localStorage.setItem('tg_session', sessionString);
             }
             codeSection.classList.remove('hidden');
             verifyBtn.classList.remove('hidden');
@@ -253,6 +251,7 @@
         }
     };
     
+    // Verify code
     verifyBtn.onclick = async () => {
         const code = verificationCodeInput.value.trim();
         const password = twoFactorInput.value;
@@ -263,9 +262,6 @@
             if (result.sessionString) {
                 sessionString = result.sessionString;
                 localStorage.setItem('tg_session', sessionString);
-                // Clear temporary hash after successful login
-                phoneCodeHash = '';
-                localStorage.removeItem('tg_phone_code_hash');
                 localStorage.setItem('tg_api_id', apiIdInput.value);
                 localStorage.setItem('tg_api_hash', apiHashInput.value);
                 localStorage.setItem('tg_phone', phoneInput.value);
@@ -288,9 +284,7 @@
     
     logoutBtn.onclick = () => {
         sessionString = '';
-        phoneCodeHash = '';
         localStorage.removeItem('tg_session');
-        localStorage.removeItem('tg_phone_code_hash');
         localStorage.removeItem('tg_api_id');
         localStorage.removeItem('tg_api_hash');
         localStorage.removeItem('tg_phone');
