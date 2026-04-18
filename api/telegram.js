@@ -84,25 +84,23 @@ export default async function handler(req, res) {
         if (!phoneCodeHash) {
           return res.status(400).json({ error: 'PHONE_CODE_HASH_MISSING', message: 'Missing hash. Request a new code.' });
         }
-        console.log(`🔐 signIn for ${phone}, hash: ${phoneCodeHash}`);
-        
-        // Create client WITHOUT session (new login)
+        console.log(`🔐 signIn for ${phone} using start() method`);
+
+        // Create a new client without a session (fresh login)
         const client = await getClient();
         try {
-          // First, check if we already have a password (2FA) or not
-          let authResult;
-          if (password) {
-            // 2FA case: use signInUserWithPassword
-            authResult = await client.signInUserWithPassword(phone, password, {
-              phoneCode: code,
-              phoneCodeHash: phoneCodeHash,
-            });
-          } else {
-            // Normal case: use signInUser with phoneCodeHash
-            authResult = await client.signInUser(phone, code, phoneCodeHash);
-          }
-          
-          // Save the session string
+          // Use the start() method which handles all login steps
+          await client.start({
+            phoneNumber: async () => phone,
+            password: async () => password || '',
+            phoneCode: async () => code,
+            phoneCodeHash: async () => phoneCodeHash,
+            onError: (err) => {
+              console.error('Start error:', err);
+              throw err;
+            },
+          });
+          // After successful login, save the session
           const savedSession = client.session.save();
           console.log('✅ Sign-in successful, session saved');
           await safeDisconnect(client);
@@ -110,16 +108,15 @@ export default async function handler(req, res) {
         } catch (err) {
           console.error('signIn error:', err);
           await safeDisconnect(client);
-          
-          // Handle 2FA required error (sometimes thrown even if we didn't call with password)
-          if (err.message.includes('SESSION_PASSWORD_NEEDED') || err.message.includes('PASSWORD_HASH_INVALID')) {
+          // Handle 2FA required (if password not provided)
+          if (err.message.includes('PASSWORD_HASH_INVALID') || err.message.includes('SESSION_PASSWORD_NEEDED')) {
             return res.status(400).json({ error: '2FA_REQUIRED', message: '2FA password required' });
           }
           return res.status(400).json({ error: err.message });
         }
       }
 
-      // ----- All other actions remain the same as before -----
+      // ---------- All other actions (unchanged) ----------
       case 'getDialogs': {
         if (!sessionString) return res.status(400).json({ error: 'Session required' });
         const client = await getClient(sessionString);
