@@ -18,8 +18,9 @@
         .btn-primary { transition: all 0.2s ease; }
         .btn-primary:active { transform: scale(0.97); }
         .progress-bar { transition: width 0.3s ease; background: linear-gradient(90deg, #3b82f6, #06b6d4); }
+        .resend-btn { transition: all 0.2s; }
+        .resend-btn:hover { text-decoration: underline; }
     </style>
-   
 </head>
 <body class="text-gray-200 p-4 md:p-6">
 <div class="max-w-6xl mx-auto">
@@ -49,6 +50,11 @@
                     <div id="codeSection" class="hidden space-y-2">
                         <input type="text" id="verificationCode" placeholder="Verification code" class="w-full bg-gray-800/60 border border-gray-700 rounded-xl px-4 py-2.5 text-sm">
                         <input type="password" id="twoFactorPassword" placeholder="2FA password (if any)" class="w-full bg-gray-800/60 border border-gray-700 rounded-xl px-4 py-2.5 text-sm">
+                        <div class="flex justify-end">
+                            <button id="resendCodeBtn" class="resend-btn text-blue-400 text-xs hover:text-blue-300 hidden">
+                                <i class="fas fa-sync-alt mr-1"></i> Resend verification code
+                            </button>
+                        </div>
                     </div>
                     <div class="flex gap-3">
                         <button id="loginBtn" class="btn-primary bg-blue-600 hover:bg-blue-500 w-full py-2.5 rounded-xl"><i class="fas fa-sign-in-alt mr-2"></i>Login / Send Code</button>
@@ -128,9 +134,9 @@
 </div>
 
 <script>
-    // Configuration
-    const API_BASE = '/api/telegram'; // Vercel serverless function endpoint
-    
+    // ======================= CONFIGURATION =======================
+    const API_BASE = '/api/telegram';
+
     // DOM Elements
     const apiIdInput = document.getElementById('apiId');
     const apiHashInput = document.getElementById('apiHash');
@@ -140,6 +146,7 @@
     const twoFactorInput = document.getElementById('twoFactorPassword');
     const loginBtn = document.getElementById('loginBtn');
     const verifyBtn = document.getElementById('verifyBtn');
+    const resendCodeBtn = document.getElementById('resendCodeBtn');
     const sessionStatusDiv = document.getElementById('sessionStatus');
     const logoutBtn = document.getElementById('logoutSessionBtn');
     const fetchGroupsBtn = document.getElementById('fetchGroupsBtn');
@@ -156,8 +163,8 @@
     const totalMembersBadge = document.getElementById('totalMembersBadge');
     const addDelayInput = document.getElementById('addDelaySec');
     const progressFill = document.getElementById('progressFill');
-    
-    // State
+
+    // ======================= GLOBAL STATE =======================
     let sessionString = localStorage.getItem('tg_session') || '';
     let scrapedMembers = [];
     let isAddingActive = false;
@@ -165,8 +172,9 @@
     let addedCounter = 0;
     let currentGroupMemberCountBefore = 0;
     let batchAddCount = 0;
-    
-    // Helper Functions
+    let currentPhoneCodeHash = null;      // 🔥 CRITICAL: stores phone_code_hash from sendCode
+
+    // ======================= HELPER FUNCTIONS =======================
     function addLog(msg, type = 'info') {
         const logDiv = document.createElement('div');
         const timestamp = new Date().toLocaleTimeString();
@@ -179,15 +187,17 @@
         logContainer.appendChild(logDiv);
         logDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
-    
-    function clearLogs() { logContainer.innerHTML = '<div class="text-gray-500">✨ Logs cleared.</div>'; }
+
+    function clearLogs() {
+        logContainer.innerHTML = '<div class="text-gray-500">✨ Logs cleared.</div>';
+    }
     clearLogsBtn.onclick = clearLogs;
-    
+
     function updateProgress(added, total) {
         const percent = total > 0 ? (added / total) * 100 : 0;
         progressFill.style.width = `${percent}%`;
     }
-    
+
     function updateMemberPreview(members) {
         totalMembersBadge.innerText = members.length;
         scrapedCountSpan.innerText = members.length;
@@ -200,7 +210,8 @@
         ).join('');
         membersPreviewDiv.innerHTML = previewHtml + (members.length > 100 ? `<div class="text-gray-500 text-center p-1">... and ${members.length-100} more</div>` : '');
     }
-    
+
+    // Core API caller (sends phoneCodeHash automatically for signIn)
     async function callApi(action, payload = {}) {
         const apiId = apiIdInput.value.trim();
         const apiHash = apiHashInput.value.trim();
@@ -215,6 +226,11 @@
             ...payload
         };
         
+        // If this is signIn and we have a stored hash, inject it
+        if (action === 'signIn' && currentPhoneCodeHash) {
+            body.phoneCodeHash = currentPhoneCodeHash;
+        }
+        
         try {
             const response = await fetch(API_BASE, {
                 method: 'POST',
@@ -222,15 +238,23 @@
                 body: JSON.stringify(body)
             });
             const data = await response.json();
-            if (!response.ok) throw new Error(data.error || 'Request failed');
+            if (!response.ok) throw new Error(data.error || data.message || 'Request failed');
             return data;
         } catch (err) {
             addLog(`API Error: ${err.message}`, 'error');
             throw err;
         }
     }
-    
-    // Login Flow
+
+    // UI helpers for code section
+    function showResendButton() {
+        resendCodeBtn.classList.remove('hidden');
+    }
+    function hideResendButton() {
+        resendCodeBtn.classList.add('hidden');
+    }
+
+    // ======================= AUTHENTICATION FLOW =======================
     loginBtn.onclick = async () => {
         const apiId = apiIdInput.value.trim();
         const apiHash = apiHashInput.value.trim();
@@ -241,20 +265,34 @@
         }
         addLog(`📲 Sending verification code to ${phone}...`, 'info');
         try {
-            await callApi('sendCode');
-            addLog(`✅ Code sent! Check your Telegram app.`, 'success');
-            codeSection.classList.remove('hidden');
-            verifyBtn.classList.remove('hidden');
-            loginBtn.classList.add('hidden');
+            const result = await callApi('sendCode');
+            if (result.phoneCodeHash) {
+                currentPhoneCodeHash = result.phoneCodeHash;
+                addLog(`✅ Code sent! Check your Telegram app.`, 'success');
+                codeSection.classList.remove('hidden');
+                verifyBtn.classList.remove('hidden');
+                loginBtn.classList.add('hidden');
+                showResendButton();
+                verificationCodeInput.value = '';
+                twoFactorInput.value = '';
+                twoFactorInput.classList.remove('border-yellow-500');
+            } else {
+                addLog(`⚠️ Unexpected response: missing phoneCodeHash`, 'error');
+            }
         } catch (err) {
             addLog(`Failed to send code: ${err.message}`, 'error');
         }
     };
-    
+
     verifyBtn.onclick = async () => {
         const code = verificationCodeInput.value.trim();
         const password = twoFactorInput.value;
         if (!code) { addLog('Enter verification code', 'warning'); return; }
+        if (!currentPhoneCodeHash) {
+            addLog('⚠️ Missing code hash. Please request a new code using "Resend Code".', 'error');
+            showResendButton();
+            return;
+        }
         addLog(`🔐 Verifying code...`, 'info');
         try {
             const result = await callApi('signIn', { code, password: password || undefined });
@@ -269,20 +307,55 @@
                 logoutBtn.classList.remove('hidden');
                 startScrapeAddBtn.disabled = false;
                 addLog(`🎉 Login successful! You can now load groups.`, 'success');
+                // Clean up code UI
+                codeSection.classList.add('hidden');
+                verifyBtn.classList.add('hidden');
+                loginBtn.classList.remove('hidden');
+                hideResendButton();
+                currentPhoneCodeHash = null;
                 await loadUserGroups();
             }
         } catch (err) {
             if (err.message.includes('2FA_REQUIRED')) {
                 addLog(`2FA required. Please enter your two-factor password.`, 'warning');
                 twoFactorInput.classList.add('border-yellow-500');
+            } else if (err.message.includes('PHONE_CODE_EXPIRED') || err.message.includes('Invalid code')) {
+                addLog(`Code expired or invalid. Please request a new code.`, 'error');
+                showResendButton();
             } else {
                 addLog(`Verification failed: ${err.message}`, 'error');
             }
         }
     };
-    
+
+    // Resend code handler
+    resendCodeBtn.onclick = async () => {
+        const phone = phoneInput.value.trim();
+        if (!phone) {
+            addLog('Phone number missing', 'error');
+            return;
+        }
+        addLog(`⟳ Requesting new verification code for ${phone}...`, 'info');
+        try {
+            const result = await callApi('sendCode');
+            if (result.phoneCodeHash) {
+                currentPhoneCodeHash = result.phoneCodeHash;
+                addLog(`✅ New code sent!`, 'success');
+                verificationCodeInput.value = '';
+                twoFactorInput.value = '';
+                twoFactorInput.classList.remove('border-yellow-500');
+                showResendButton(); // keep it visible in case of repeated expiry
+            } else {
+                addLog(`Failed to obtain new code hash`, 'error');
+            }
+        } catch (err) {
+            addLog(`Resend failed: ${err.message}`, 'error');
+        }
+    };
+
     logoutBtn.onclick = () => {
         sessionString = '';
+        currentPhoneCodeHash = null;
         localStorage.removeItem('tg_session');
         localStorage.removeItem('tg_api_id');
         localStorage.removeItem('tg_api_hash');
@@ -293,11 +366,13 @@
         codeSection.classList.add('hidden');
         verifyBtn.classList.add('hidden');
         loginBtn.classList.remove('hidden');
+        hideResendButton();
         sourceGroupSelect.innerHTML = '<option>-- Login first --</option>';
         targetGroupSelect.innerHTML = '<option>-- Login first --</option>';
         addLog('Session cleared.', 'info');
     };
-    
+
+    // ======================= GROUP MANAGEMENT =======================
     async function loadUserGroups() {
         if (!sessionString) { addLog('No active session', 'error'); return; }
         addLog('Fetching your groups & channels...', 'info');
@@ -319,9 +394,9 @@
             addLog(`Failed to load groups: ${err.message}`, 'error');
         }
     }
-    
+
     fetchGroupsBtn.onclick = loadUserGroups;
-    
+
     async function scrapeMembersFromSource(sourceObj) {
         addLog(`🕵️ Scraping members from ${sourceObj.title}... (this may take a moment)`, 'info');
         try {
@@ -340,7 +415,7 @@
             return [];
         }
     }
-    
+
     async function getGroupMemberCount(groupObj) {
         try {
             const result = await callApi('getGroupInfo', {
@@ -353,7 +428,7 @@
             return -1;
         }
     }
-    
+
     async function addSingleMember(userId, accessHash, groupObj) {
         try {
             const result = await callApi('addMember', {
@@ -375,9 +450,10 @@
             return { success: false, error: err.message };
         }
     }
-    
+
     function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
-    
+
+    // ======================= SCRAPE & ADD PROCESS =======================
     async function startScrapeAndAdd() {
         if (!sessionString) { addLog('No active session, login first', 'error'); return; }
         const sourceRaw = sourceGroupSelect.value;
@@ -464,15 +540,15 @@
             stopRequested = false;
         }
     }
-    
+
     stopProcessBtn.onclick = () => {
         stopRequested = true;
         addLog('🛑 Stopping process...', 'warning');
     };
-    
+
     startScrapeAddBtn.onclick = startScrapeAndAdd;
-    
-    // Restore session on load
+
+    // ======================= RESTORE SESSION ON PAGE LOAD =======================
     if (sessionString) {
         const savedApiId = localStorage.getItem('tg_api_id');
         const savedApiHash = localStorage.getItem('tg_api_hash');
