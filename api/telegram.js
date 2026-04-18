@@ -67,7 +67,7 @@ export default async function handler(req, res) {
           const result = await client.sendCode({ apiId: apiIdNum, apiHash }, phone);
           const hash = result.phone_code_hash || result.phoneCodeHash;
           if (!hash) throw new Error('No phone code hash received');
-          console.log(`✅ Code sent, hash: ${hash}`);
+          console.log(`✅ Code sent to ${phone}, hash: ${hash}`);
           return res.json({ success: true, phoneCodeHash: hash });
         } catch (err) {
           console.error('sendCode error:', err);
@@ -84,12 +84,14 @@ export default async function handler(req, res) {
         if (!phoneCodeHash) {
           return res.status(400).json({ error: 'PHONE_CODE_HASH_MISSING', message: 'Missing hash. Request a new code.' });
         }
-        console.log(`🔐 signIn for ${phone} using start() method`);
+        console.log(`🔐 signIn for ${phone}`);
+        console.log(`   Code: "${code}"`);
+        console.log(`   Hash: "${phoneCodeHash}"`);
+        console.log(`   Password provided: ${password ? 'Yes' : 'No'}`);
 
-        // Create a new client without a session (fresh login)
         const client = await getClient();
         try {
-          // Use the start() method which handles all login steps
+          // Use start() method – handles all login steps including 2FA
           await client.start({
             phoneNumber: async () => phone,
             password: async () => password || '',
@@ -100,23 +102,23 @@ export default async function handler(req, res) {
               throw err;
             },
           });
-          // After successful login, save the session
           const savedSession = client.session.save();
           console.log('✅ Sign-in successful, session saved');
           await safeDisconnect(client);
           return res.json({ success: true, sessionString: savedSession });
         } catch (err) {
-          console.error('signIn error:', err);
+          console.error('signIn error details:', err);
           await safeDisconnect(client);
-          // Handle 2FA required (if password not provided)
           if (err.message.includes('PASSWORD_HASH_INVALID') || err.message.includes('SESSION_PASSWORD_NEEDED')) {
             return res.status(400).json({ error: '2FA_REQUIRED', message: '2FA password required' });
+          }
+          if (err.message.includes('PHONE_CODE_INVALID')) {
+            return res.status(400).json({ error: 'The code you entered is incorrect or expired. Please request a new code and try again.' });
           }
           return res.status(400).json({ error: err.message });
         }
       }
 
-      // ---------- All other actions (unchanged) ----------
       case 'getDialogs': {
         if (!sessionString) return res.status(400).json({ error: 'Session required' });
         const client = await getClient(sessionString);
