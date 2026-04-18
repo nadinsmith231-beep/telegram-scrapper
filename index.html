@@ -281,8 +281,36 @@
                 twoFactorInput.value = '';
                 twoFactorInput.classList.remove('border-yellow-500');
             } else {
-                addLog(`⚠️ Unexpected response: missing phoneCodeHash. Full response: ${JSON.stringify(result)}`, 'error');
-                console.error('Full sendCode response:', result);
+                // Special handling: if backend returned an error message, show it
+                if (result.error) {
+                    addLog(`❌ Server error: ${result.error}`, 'error');
+                    if (result.rawResult) {
+                        console.error('Raw Telegram response:', result.rawResult);
+                        addLog(`🔍 Debug: ${JSON.stringify(result.rawResult)}`, 'warning');
+                    }
+                } else {
+                    addLog(`⚠️ Unexpected response: missing phoneCodeHash. Full response: ${JSON.stringify(result)}`, 'error');
+                }
+                // Auto-retry once after 2 seconds
+                addLog(`⟳ Retrying automatically...`, 'info');
+                setTimeout(async () => {
+                    try {
+                        const retryResult = await callApi('sendCode');
+                        const retryHash = retryResult.phoneCodeHash || retryResult.phone_code_hash;
+                        if (retryHash) {
+                            currentPhoneCodeHash = retryHash;
+                            addLog(`✅ Code sent on retry! Check your Telegram app.`, 'success');
+                            codeSection.classList.remove('hidden');
+                            verifyBtn.classList.remove('hidden');
+                            loginBtn.classList.add('hidden');
+                            showResendButton();
+                        } else {
+                            addLog(`❌ Retry also failed. Please check your API credentials and phone number.`, 'error');
+                        }
+                    } catch (e) {
+                        addLog(`Retry failed: ${e.message}`, 'error');
+                    }
+                }, 2000);
             }
         } catch (err) {
             addLog(`Failed to send code: ${err.message}`, 'error');
