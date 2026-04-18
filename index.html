@@ -237,7 +237,7 @@
                 body: JSON.stringify(body)
             });
             const data = await response.json();
-            console.log(`[callApi] Response for ${action}:`, data); // DEBUG: see full response
+            console.log(`[callApi] ${action} response:`, data);
             
             if (!response.ok) {
                 throw new Error(data.error || data.message || `HTTP ${response.status}`);
@@ -268,7 +268,7 @@
         addLog(`📲 Sending verification code to ${phone}...`, 'info');
         try {
             const result = await callApi('sendCode');
-            // Support both camelCase and snake_case responses
+            // Try multiple possible field names
             const hash = result.phoneCodeHash || result.phone_code_hash;
             if (hash) {
                 currentPhoneCodeHash = hash;
@@ -350,7 +350,7 @@
                 twoFactorInput.classList.remove('border-yellow-500');
                 showResendButton();
             } else {
-                addLog(`Failed: no phoneCodeHash in response.`, 'error');
+                addLog(`Failed: no phoneCodeHash in response. Full: ${JSON.stringify(result)}`, 'error');
             }
         } catch (err) {
             addLog(`Resend failed: ${err.message}`, 'error');
