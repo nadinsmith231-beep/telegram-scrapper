@@ -19,10 +19,11 @@
         .btn-primary:active { transform: scale(0.97); }
         .progress-bar { transition: width 0.3s ease; background: linear-gradient(90deg, #3b82f6, #06b6d4); }
     </style>
+   
 </head>
 <body class="text-gray-200 p-4 md:p-6">
 <div class="max-w-6xl mx-auto">
-    <!-- Header (same as before) -->
+    <!-- Header -->
     <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
         <div class="flex items-center gap-3">
             <div class="bg-blue-600 p-2 rounded-2xl shadow-lg"><i class="fab fa-telegram text-3xl text-white"></i></div>
@@ -127,9 +128,10 @@
 </div>
 
 <script>
-    const API_BASE = '/api/telegram';
+    // Configuration
+    const API_BASE = '/api/telegram'; // Vercel serverless function endpoint
     
-    // DOM elements
+    // DOM Elements
     const apiIdInput = document.getElementById('apiId');
     const apiHashInput = document.getElementById('apiHash');
     const phoneInput = document.getElementById('phoneNumber');
@@ -157,7 +159,6 @@
     
     // State
     let sessionString = localStorage.getItem('tg_session') || '';
-    let phoneCodeHash = localStorage.getItem('tg_phone_code_hash') || '';
     let scrapedMembers = [];
     let isAddingActive = false;
     let stopRequested = false;
@@ -165,6 +166,7 @@
     let currentGroupMemberCountBefore = 0;
     let batchAddCount = 0;
     
+    // Helper Functions
     function addLog(msg, type = 'info') {
         const logDiv = document.createElement('div');
         const timestamp = new Date().toLocaleTimeString();
@@ -204,7 +206,6 @@
         const apiHash = apiHashInput.value.trim();
         const phone = phoneInput.value.trim();
         
-        // Build the request body
         const body = {
             action,
             apiId,
@@ -214,14 +215,6 @@
             ...payload
         };
         
-        // CRITICAL: For signIn, always include phoneCodeHash from localStorage
-        if (action === 'signIn') {
-            body.phoneCodeHash = phoneCodeHash;
-            console.log('[DEBUG] signIn request, phoneCodeHash =', phoneCodeHash);
-        }
-        
-        console.log('[DEBUG] Sending request:', body);
-        
         try {
             const response = await fetch(API_BASE, {
                 method: 'POST',
@@ -229,7 +222,6 @@
                 body: JSON.stringify(body)
             });
             const data = await response.json();
-            console.log('[DEBUG] Response:', data);
             if (!response.ok) throw new Error(data.error || 'Request failed');
             return data;
         } catch (err) {
@@ -238,6 +230,7 @@
         }
     }
     
+    // Login Flow
     loginBtn.onclick = async () => {
         const apiId = apiIdInput.value.trim();
         const apiHash = apiHashInput.value.trim();
@@ -248,15 +241,8 @@
         }
         addLog(`📲 Sending verification code to ${phone}...`, 'info');
         try {
-            const result = await callApi('sendCode');
+            await callApi('sendCode');
             addLog(`✅ Code sent! Check your Telegram app.`, 'success');
-            if (result.phoneCodeHash) {
-                phoneCodeHash = result.phoneCodeHash;
-                localStorage.setItem('tg_phone_code_hash', phoneCodeHash);
-                console.log('[DEBUG] Stored phoneCodeHash:', phoneCodeHash);
-            } else {
-                console.warn('[DEBUG] No phoneCodeHash in response', result);
-            }
             codeSection.classList.remove('hidden');
             verifyBtn.classList.remove('hidden');
             loginBtn.classList.add('hidden');
@@ -270,15 +256,11 @@
         const password = twoFactorInput.value;
         if (!code) { addLog('Enter verification code', 'warning'); return; }
         addLog(`🔐 Verifying code...`, 'info');
-        console.log('[DEBUG] Using phoneCodeHash for verification:', phoneCodeHash);
         try {
             const result = await callApi('signIn', { code, password: password || undefined });
             if (result.sessionString) {
                 sessionString = result.sessionString;
                 localStorage.setItem('tg_session', sessionString);
-                // Clear temporary hash
-                phoneCodeHash = '';
-                localStorage.removeItem('tg_phone_code_hash');
                 localStorage.setItem('tg_api_id', apiIdInput.value);
                 localStorage.setItem('tg_api_hash', apiHashInput.value);
                 localStorage.setItem('tg_phone', phoneInput.value);
@@ -301,9 +283,7 @@
     
     logoutBtn.onclick = () => {
         sessionString = '';
-        phoneCodeHash = '';
         localStorage.removeItem('tg_session');
-        localStorage.removeItem('tg_phone_code_hash');
         localStorage.removeItem('tg_api_id');
         localStorage.removeItem('tg_api_hash');
         localStorage.removeItem('tg_phone');
@@ -384,6 +364,7 @@
             });
             return result;
         } catch (err) {
+            // Handle flood wait specially
             if (err.message.includes('FLOOD_WAIT')) {
                 const waitMatch = err.message.match(/\d+/);
                 const waitTime = waitMatch ? parseInt(waitMatch[0]) : 60;
@@ -457,6 +438,7 @@
                     }
                 }
                 
+                // Check member count every 20 adds
                 if (batchAddCount >= 20 && currentGroupMemberCountBefore !== -1) {
                     const newCount = await getGroupMemberCount(targetObj);
                     addLog(`🔍 Member count: before=${currentGroupMemberCountBefore}, now=${newCount}`, 'info');
