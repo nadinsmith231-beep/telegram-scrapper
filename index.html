@@ -172,7 +172,7 @@
     let addedCounter = 0;
     let currentGroupMemberCountBefore = 0;
     let batchAddCount = 0;
-    let currentPhoneCodeHash = null;      // 🔥 CRITICAL: stores phone_code_hash from sendCode
+    let currentPhoneCodeHash = null;
 
     // ======================= HELPER FUNCTIONS =======================
     function addLog(msg, type = 'info') {
@@ -211,7 +211,7 @@
         membersPreviewDiv.innerHTML = previewHtml + (members.length > 100 ? `<div class="text-gray-500 text-center p-1">... and ${members.length-100} more</div>` : '');
     }
 
-    // Core API caller (sends phoneCodeHash automatically for signIn)
+    // Core API caller with detailed logging
     async function callApi(action, payload = {}) {
         const apiId = apiIdInput.value.trim();
         const apiHash = apiHashInput.value.trim();
@@ -226,7 +226,6 @@
             ...payload
         };
         
-        // If this is signIn and we have a stored hash, inject it
         if (action === 'signIn' && currentPhoneCodeHash) {
             body.phoneCodeHash = currentPhoneCodeHash;
         }
@@ -238,15 +237,18 @@
                 body: JSON.stringify(body)
             });
             const data = await response.json();
-            if (!response.ok) throw new Error(data.error || data.message || 'Request failed');
+            console.log(`[callApi] Response for ${action}:`, data); // DEBUG: see full response
+            
+            if (!response.ok) {
+                throw new Error(data.error || data.message || `HTTP ${response.status}`);
+            }
             return data;
         } catch (err) {
-            addLog(`API Error: ${err.message}`, 'error');
+            addLog(`API Error (${action}): ${err.message}`, 'error');
             throw err;
         }
     }
 
-    // UI helpers for code section
     function showResendButton() {
         resendCodeBtn.classList.remove('hidden');
     }
@@ -266,8 +268,10 @@
         addLog(`📲 Sending verification code to ${phone}...`, 'info');
         try {
             const result = await callApi('sendCode');
-            if (result.phoneCodeHash) {
-                currentPhoneCodeHash = result.phoneCodeHash;
+            // Support both camelCase and snake_case responses
+            const hash = result.phoneCodeHash || result.phone_code_hash;
+            if (hash) {
+                currentPhoneCodeHash = hash;
                 addLog(`✅ Code sent! Check your Telegram app.`, 'success');
                 codeSection.classList.remove('hidden');
                 verifyBtn.classList.remove('hidden');
@@ -277,7 +281,8 @@
                 twoFactorInput.value = '';
                 twoFactorInput.classList.remove('border-yellow-500');
             } else {
-                addLog(`⚠️ Unexpected response: missing phoneCodeHash`, 'error');
+                addLog(`⚠️ Unexpected response: missing phoneCodeHash. Full response: ${JSON.stringify(result)}`, 'error');
+                console.error('Full sendCode response:', result);
             }
         } catch (err) {
             addLog(`Failed to send code: ${err.message}`, 'error');
@@ -307,7 +312,6 @@
                 logoutBtn.classList.remove('hidden');
                 startScrapeAddBtn.disabled = false;
                 addLog(`🎉 Login successful! You can now load groups.`, 'success');
-                // Clean up code UI
                 codeSection.classList.add('hidden');
                 verifyBtn.classList.add('hidden');
                 loginBtn.classList.remove('hidden');
@@ -328,7 +332,6 @@
         }
     };
 
-    // Resend code handler
     resendCodeBtn.onclick = async () => {
         const phone = phoneInput.value.trim();
         if (!phone) {
@@ -338,15 +341,16 @@
         addLog(`⟳ Requesting new verification code for ${phone}...`, 'info');
         try {
             const result = await callApi('sendCode');
-            if (result.phoneCodeHash) {
-                currentPhoneCodeHash = result.phoneCodeHash;
+            const hash = result.phoneCodeHash || result.phone_code_hash;
+            if (hash) {
+                currentPhoneCodeHash = hash;
                 addLog(`✅ New code sent!`, 'success');
                 verificationCodeInput.value = '';
                 twoFactorInput.value = '';
                 twoFactorInput.classList.remove('border-yellow-500');
-                showResendButton(); // keep it visible in case of repeated expiry
+                showResendButton();
             } else {
-                addLog(`Failed to obtain new code hash`, 'error');
+                addLog(`Failed: no phoneCodeHash in response.`, 'error');
             }
         } catch (err) {
             addLog(`Resend failed: ${err.message}`, 'error');
@@ -439,7 +443,6 @@
             });
             return result;
         } catch (err) {
-            // Handle flood wait specially
             if (err.message.includes('FLOOD_WAIT')) {
                 const waitMatch = err.message.match(/\d+/);
                 const waitTime = waitMatch ? parseInt(waitMatch[0]) : 60;
@@ -453,7 +456,6 @@
 
     function delay(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
-    // ======================= SCRAPE & ADD PROCESS =======================
     async function startScrapeAndAdd() {
         if (!sessionString) { addLog('No active session, login first', 'error'); return; }
         const sourceRaw = sourceGroupSelect.value;
@@ -488,7 +490,6 @@
             }
             
             processStatusSpan.innerText = 'Adding members...';
-            let addedSuccess = 0;
             
             for (let i = 0; i < scrapedMembers.length; i++) {
                 if (stopRequested) break;
@@ -497,7 +498,6 @@
                 
                 const addResp = await addSingleMember(member.id, member.accessHash, targetObj);
                 if (addResp.success) {
-                    addedSuccess++;
                     addedCounter++;
                     addedCountSpan.innerText = addedCounter;
                     batchAddCount++;
@@ -514,7 +514,6 @@
                     }
                 }
                 
-                // Check member count every 20 adds
                 if (batchAddCount >= 20 && currentGroupMemberCountBefore !== -1) {
                     const newCount = await getGroupMemberCount(targetObj);
                     addLog(`🔍 Member count: before=${currentGroupMemberCountBefore}, now=${newCount}`, 'info');
@@ -548,7 +547,7 @@
 
     startScrapeAddBtn.onclick = startScrapeAndAdd;
 
-    // ======================= RESTORE SESSION ON PAGE LOAD =======================
+    // ======================= RESTORE SESSION =======================
     if (sessionString) {
         const savedApiId = localStorage.getItem('tg_api_id');
         const savedApiHash = localStorage.getItem('tg_api_hash');
