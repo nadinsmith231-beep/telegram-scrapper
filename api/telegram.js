@@ -3,6 +3,7 @@ import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 
 export default async function handler(req, res) {
+  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -11,7 +12,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  console.log('📩 Received body:', req.body);
+  console.log('📩 Incoming body:', JSON.stringify(req.body, null, 2));
 
   const {
     action,
@@ -29,9 +30,13 @@ export default async function handler(req, res) {
     limit = 500,
   } = req.body;
 
-  if (!apiId || !apiHash) return res.status(400).json({ error: 'API ID and API Hash are required' });
+  if (!apiId || !apiHash) {
+    return res.status(400).json({ error: 'API ID and API Hash are required' });
+  }
   const apiIdNum = Number(apiId);
-  if (isNaN(apiIdNum)) return res.status(400).json({ error: 'API ID must be a number' });
+  if (isNaN(apiIdNum)) {
+    return res.status(400).json({ error: 'API ID must be a number' });
+  }
 
   const getClient = async (session = '') => {
     const stringSession = new StringSession(session);
@@ -46,41 +51,66 @@ export default async function handler(req, res) {
 
   const safeDisconnect = async (client) => {
     if (client && typeof client.disconnect === 'function') {
-      try { await client.disconnect(); } catch (e) { console.warn('Disconnect error:', e); }
+      try {
+        await client.disconnect();
+      } catch (e) {
+        console.warn('Disconnect error:', e.message);
+      }
     }
   };
 
   try {
     switch (action) {
       case 'sendCode': {
-        if (!phone) return res.status(400).json({ error: 'Phone number required' });
+        if (!phone) {
+          return res.status(400).json({ error: 'Phone number required' });
+        }
+        console.log(`📲 sendCode for ${phone} with apiId=${apiIdNum}`);
         const client = await getClient();
         try {
+          // Method 1: using object form (works in most versions)
           const result = await client.sendCode({ apiId: apiIdNum, apiHash }, phone);
-          console.log('✅ Code sent, hash:', result.phone_code_hash);
-          // 🔥 CRITICAL: Return the hash
-          return res.json({ success: true, phoneCodeHash: result.phone_code_hash });
+          console.log('Raw sendCode result:', JSON.stringify(result, null, 2));
+          
+          // Extract hash – it might be in result.phone_code_hash or result.phoneCodeHash
+          const hash = result.phone_code_hash || result.phoneCodeHash;
+          if (!hash) {
+            console.error('No hash in result! Full result:', result);
+            return res.status(500).json({ error: 'Telegram did not return a phone code hash' });
+          }
+          
+          console.log(`✅ Code sent, hash: ${hash}`);
+          return res.json({ success: true, phoneCodeHash: hash });
+        } catch (err) {
+          console.error('sendCode error:', err);
+          await safeDisconnect(client);
+          return res.status(400).json({ error: err.message });
         } finally {
           await safeDisconnect(client);
         }
       }
 
       case 'signIn': {
-        if (!phone || !code) return res.status(400).json({ error: 'Phone and code required' });
-        if (!phoneCodeHash) {
-          return res.status(400).json({ error: 'Missing phone_code_hash. Please request a new code.' });
+        if (!phone || !code) {
+          return res.status(400).json({ error: 'Phone and verification code required' });
         }
+        if (!phoneCodeHash) {
+          return res.status(400).json({ error: 'PHONE_CODE_HASH_MISSING', message: 'Missing hash. Request a new code.' });
+        }
+        console.log(`🔐 signIn for ${phone}, hash: ${phoneCodeHash}`);
         const client = await getClient();
         try {
-          let result;
+          let authResult;
           if (password) {
-            result = await client.signInUserWithPassword(phone, password, { phoneCode: code });
+            authResult = await client.signInUserWithPassword(phone, password, { phoneCode: code });
           } else {
-            result = await client.signInUser(phone, code, phoneCodeHash);
+            authResult = await client.signInUser(phone, code, phoneCodeHash);
           }
-          const authKey = client.session.save();
-          return res.json({ success: true, sessionString: authKey });
+          const savedSession = client.session.save();
+          console.log('✅ Sign-in successful, session saved');
+          return res.json({ success: true, sessionString: savedSession });
         } catch (err) {
+          console.error('signIn error:', err);
           if (err.message.includes('SESSION_PASSWORD_NEEDED')) {
             return res.status(400).json({ error: '2FA_REQUIRED', message: '2FA password required' });
           }
@@ -215,7 +245,7 @@ export default async function handler(req, res) {
         return res.status(400).json({ error: `Invalid action: ${action}` });
     }
   } catch (err) {
-    console.error('Unhandled handler error:', err);
+    console.error('Unhandled error:', err);
     return res.status(500).json({ error: err.message || 'Internal server error' });
   }
 }
