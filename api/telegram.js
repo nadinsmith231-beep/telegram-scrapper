@@ -3,7 +3,6 @@ import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 
 export default async function handler(req, res) {
-  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -63,16 +62,11 @@ export default async function handler(req, res) {
     switch (action) {
       case 'sendCode': {
         if (!phone) return res.status(400).json({ error: 'Phone number required' });
-        console.log(`📲 sendCode for ${phone} with apiId=${apiIdNum}`);
         const client = await getClient();
         try {
           const result = await client.sendCode({ apiId: apiIdNum, apiHash }, phone);
-          console.log('Raw sendCode result:', JSON.stringify(result, null, 2));
           const hash = result.phone_code_hash || result.phoneCodeHash;
-          if (!hash) {
-            console.error('No hash in result!');
-            return res.status(500).json({ error: 'Telegram did not return a phone code hash' });
-          }
+          if (!hash) throw new Error('No phone code hash received');
           console.log(`✅ Code sent, hash: ${hash}`);
           return res.json({ success: true, phoneCodeHash: hash });
         } catch (err) {
@@ -88,46 +82,41 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: 'Phone and verification code required' });
         }
         if (!phoneCodeHash) {
-          console.error('❌ Missing phoneCodeHash');
           return res.status(400).json({ error: 'PHONE_CODE_HASH_MISSING', message: 'Missing hash. Request a new code.' });
         }
-        console.log(`🔐 signIn for ${phone}`);
-        console.log(`   Code received: "${code}"`);
-        console.log(`   Hash received: "${phoneCodeHash}"`);
+        console.log(`🔐 signIn for ${phone} using start() method`);
 
+        // Create a new client without a session (fresh login)
         const client = await getClient();
         try {
           // Use the start() method which handles all login steps
-          console.log('Attempting sign in with client.start()...');
           await client.start({
             phoneNumber: async () => phone,
             password: async () => password || '',
             phoneCode: async () => code,
             phoneCodeHash: async () => phoneCodeHash,
             onError: (err) => {
-              console.error('Start error callback:', err);
+              console.error('Start error:', err);
               throw err;
             },
           });
+          // After successful login, save the session
           const savedSession = client.session.save();
           console.log('✅ Sign-in successful, session saved');
           await safeDisconnect(client);
           return res.json({ success: true, sessionString: savedSession });
         } catch (err) {
-          console.error('signIn error details:', err);
+          console.error('signIn error:', err);
           await safeDisconnect(client);
-          // Handle 2FA required
+          // Handle 2FA required (if password not provided)
           if (err.message.includes('PASSWORD_HASH_INVALID') || err.message.includes('SESSION_PASSWORD_NEEDED')) {
             return res.status(400).json({ error: '2FA_REQUIRED', message: '2FA password required' });
-          }
-          // Specific error for invalid code
-          if (err.message.includes('PHONE_CODE_INVALID')) {
-            return res.status(400).json({ error: 'The verification code you entered is incorrect or expired. Please request a new code and try again.' });
           }
           return res.status(400).json({ error: err.message });
         }
       }
 
+      // ---------- All other actions (unchanged) ----------
       case 'getDialogs': {
         if (!sessionString) return res.status(400).json({ error: 'Session required' });
         const client = await getClient(sessionString);
@@ -141,7 +130,6 @@ export default async function handler(req, res) {
               title: d.title,
               type: d.isChannel ? 'channel' : 'supergroup',
             }));
-          console.log(`📁 Loaded ${groups.length} groups/channels`);
           return res.json({ success: true, dialogs: groups });
         } finally {
           await safeDisconnect(client);
@@ -187,7 +175,6 @@ export default async function handler(req, res) {
             if (users.length < batchSize) hasMore = false;
             offset += batchSize;
           }
-          console.log(`🕵️ Scraped ${members.length} members from group ${groupId}`);
           return res.json({ success: true, members, total: members.length });
         } finally {
           await safeDisconnect(client);
@@ -211,7 +198,6 @@ export default async function handler(req, res) {
             accessHash: String(userAccessHash),
           };
           await client.invoke(new Api.channels.InviteToChannel({ channel, users: [user] }));
-          console.log(`➕ Added user ${userId} to group ${groupId}`);
           return res.json({ success: true });
         } catch (err) {
           let errorMsg = err.message;
@@ -246,7 +232,6 @@ export default async function handler(req, res) {
           const full = await client.invoke(new Api.channels.GetFullChannel({ channel }));
           const memberCount =
             full.fullChat?.participantsCount || full.chats?.[0]?.participantsCount || 0;
-          console.log(`📊 Group ${groupId} member count: ${memberCount}`);
           return res.json({ success: true, memberCount });
         } finally {
           await safeDisconnect(client);
