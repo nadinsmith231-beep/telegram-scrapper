@@ -3,7 +3,6 @@ import { TelegramClient } from 'telegram';
 import { StringSession } from 'telegram/sessions/index.js';
 
 export default async function handler(req, res) {
-  // CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -62,28 +61,16 @@ export default async function handler(req, res) {
   try {
     switch (action) {
       case 'sendCode': {
-        if (!phone) {
-          return res.status(400).json({ error: 'Phone number required' });
-        }
-        console.log(`📲 sendCode for ${phone} with apiId=${apiIdNum}`);
+        if (!phone) return res.status(400).json({ error: 'Phone number required' });
         const client = await getClient();
         try {
-          // Method 1: using object form (works in most versions)
           const result = await client.sendCode({ apiId: apiIdNum, apiHash }, phone);
-          console.log('Raw sendCode result:', JSON.stringify(result, null, 2));
-          
-          // Extract hash – it might be in result.phone_code_hash or result.phoneCodeHash
           const hash = result.phone_code_hash || result.phoneCodeHash;
-          if (!hash) {
-            console.error('No hash in result! Full result:', result);
-            return res.status(500).json({ error: 'Telegram did not return a phone code hash' });
-          }
-          
+          if (!hash) throw new Error('No phone code hash received');
           console.log(`✅ Code sent, hash: ${hash}`);
           return res.json({ success: true, phoneCodeHash: hash });
         } catch (err) {
           console.error('sendCode error:', err);
-          await safeDisconnect(client);
           return res.status(400).json({ error: err.message });
         } finally {
           await safeDisconnect(client);
@@ -98,28 +85,41 @@ export default async function handler(req, res) {
           return res.status(400).json({ error: 'PHONE_CODE_HASH_MISSING', message: 'Missing hash. Request a new code.' });
         }
         console.log(`🔐 signIn for ${phone}, hash: ${phoneCodeHash}`);
+        
+        // Create client WITHOUT session (new login)
         const client = await getClient();
         try {
+          // First, check if we already have a password (2FA) or not
           let authResult;
           if (password) {
-            authResult = await client.signInUserWithPassword(phone, password, { phoneCode: code });
+            // 2FA case: use signInUserWithPassword
+            authResult = await client.signInUserWithPassword(phone, password, {
+              phoneCode: code,
+              phoneCodeHash: phoneCodeHash,
+            });
           } else {
+            // Normal case: use signInUser with phoneCodeHash
             authResult = await client.signInUser(phone, code, phoneCodeHash);
           }
+          
+          // Save the session string
           const savedSession = client.session.save();
           console.log('✅ Sign-in successful, session saved');
+          await safeDisconnect(client);
           return res.json({ success: true, sessionString: savedSession });
         } catch (err) {
           console.error('signIn error:', err);
-          if (err.message.includes('SESSION_PASSWORD_NEEDED')) {
+          await safeDisconnect(client);
+          
+          // Handle 2FA required error (sometimes thrown even if we didn't call with password)
+          if (err.message.includes('SESSION_PASSWORD_NEEDED') || err.message.includes('PASSWORD_HASH_INVALID')) {
             return res.status(400).json({ error: '2FA_REQUIRED', message: '2FA password required' });
           }
           return res.status(400).json({ error: err.message });
-        } finally {
-          await safeDisconnect(client);
         }
       }
 
+      // ----- All other actions remain the same as before -----
       case 'getDialogs': {
         if (!sessionString) return res.status(400).json({ error: 'Session required' });
         const client = await getClient(sessionString);
